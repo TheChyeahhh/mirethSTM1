@@ -13,7 +13,8 @@ from mirethstm import Engine  # noqa: E402
 # Any Hugging Face causal LM with a chat template (SPEC 11): a hub id or a local folder.
 MODEL_ID = os.environ.get("MIRETHSTM_TEST_MODEL", "Qwen/Qwen3-0.6B")
 DEVICE = os.environ.get("MIRETHSTM_TEST_DEVICE", "cpu")
-DTYPE = torch.float32 if DEVICE == "cpu" else torch.bfloat16
+# float32 by default on every device, so the exact-equality tests check the method, not bf16 rounding.
+DTYPE = getattr(torch, os.environ.get("MIRETHSTM_TEST_DTYPE", "float32"))
 
 
 def _require_cached(*filenames):
