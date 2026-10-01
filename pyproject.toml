@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-bench = ["datasets>=4"]
+bench = ["datasets>=4", "matplotlib"]
 dev = ["pytest"]
 
 [project.scripts]
