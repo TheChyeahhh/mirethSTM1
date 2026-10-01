@@ -127,12 +127,18 @@ The closing `}` (and the closing quote for choice) terminates the label, so a la
 - Caller text (the user message, the suffix, every candidate) is encoded so that it never yields a control token: the text is cut just inside every added-token string (`<|im_end|>`, `<think>`, ...) and the pieces are encoded as plain text. A state, instruction or option name that contains `<|im_end|><|im_start|>system ...` therefore cannot close the user turn or forge a new one. A test counts control tokens to prove it.
 - Prefix, suffix and candidate ids are concatenated. The boundaries (template | user text, `":` | ` `) are pre-tokenizer boundaries for the Qwen3 tokenizer, so for text without added-token strings this equals tokenizing the joined string. A test asserts that equality for every test schema.
 
-### 3.4 Cached batched scoring (verified on CPU, `docs/research/05-environment.md` section 4)
+### 3.4 Packed single-pass scoring
 
-1. Prefill: `model.model(input_ids=prefix_ids, past_key_values=DynamicCache(config=model.config), use_cache=True)`. Keep references to every `cache.layers[i].keys / .values` (no copy).
+Speed matters most (founder, 2026-09-30), so all labels of all questions are scored in one forward pass after the prefill, with no copies of the prefix cache. (Day 1 copied the cache once per label in chunks of 8; a 255-option question needed 32 passes.)
+
+1. Prefill once with the model's decoder (`model.get_decoder()`) and a `DynamicCache`. Keep references to every layer's keys and values (no copy).
 2. Flatten all (question, label) pairs across all questions. Each sequence = suffix ids + candidate ids.
-3. For each chunk of at most `chunk_size` sequences (N of them): build `DynamicCache(ddp_cache_data=[(k.repeat_interleave(N, 0), v.repeat_interleave(N, 0)), ...])`, right-pad the sequences, pass a 2D `attention_mask` of shape `(N, prefix_len + L)` (ones for the prefix), no `position_ids`.
-4. Take `last_hidden_state`; apply `model.lm_head` only at the positions that predict candidate tokens (position j predicts token j+1); `log_softmax` in float32; sum the log-probs of the candidate tokens. The suffix tokens are context, not scored.
+3. Pack consecutive sequences into passes of at most `batch_tokens` tokens (a longer sequence gets a pass of its own). For a pass of M tokens:
+   - `input_ids` of shape `(1, M)`: the sequences one after another.
+   - `position_ids` of shape `(1, M)`: each sequence restarts at P (the prefix length): P, P+1, ...
+   - A 4D attention mask of shape `(1, 1, M, P + M)`: a token sees every prefix position and the earlier tokens of its own sequence (and itself), nothing else.
+   - A fresh batch-1 `DynamicCache` built from the step 1 references, so passes never see each other.
+4. Apply the output head (`model.get_output_embeddings()`) only at the positions that predict candidate tokens (a token is predicted by the position before it); `log_softmax` in float32; sum per sequence. The suffix tokens are context, not scored.
 5. Raw score of a label: `s = sum of its candidate-token log-probs` (no length normalization).
 
 Acceptance: the result equals scoring each full sequence without a cache to within 2e-4 in summed log-prob (fp32, CPU). Measured: 7.6e-5 with a 280-token prefix; an fp64 reference shows both paths carry the same float32 round-off, so the cache adds no error.
@@ -150,9 +156,10 @@ engine = Engine.load(
     "Qwen/Qwen3-4B-Instruct-2507",
     device=None,        # "cuda" if available, else "cpu"
     dtype=None,         # bfloat16 on cuda, float32 on cpu
-    chunk_size=8,       # sequences per cached batch; bounds memory at chunk_size x prefix KV
+    batch_tokens=2048,  # candidate tokens per scoring pass (section 3.4); bounds memory
     temperature=None,   # None: the shipped default for this model (section 9), else 1.0
     event_log=None,     # path: append the frozen JSONL events (section 8)
+    tarnlight=True,     # feed Tarnlight when its drop folder exists (section 10.3)
 )
 result = engine.decide(context, schema)   # context: str | dict | list (TypeSafe state); schema: TypeSafe questions map
 raw = engine.score(context, schema)       # {question_id: {label: s}} raw summed log-probs, before temperature
@@ -163,13 +170,14 @@ raw = engine.score(context, schema)       # {question_id: {label: s}} raw summed
 ## 5. CLI
 
 ```
-mirethstm decide --schema s.json [--model ID] [--temperature T] [--device D] [--chunk-size N] [--log events.jsonl] [--state-json] < ctx.txt
+mirethstm decide --schema s.json [--model ID] [--temperature T] [--device D] [--batch-tokens N] [--log events.jsonl] [--state-json] [--no-tarnlight] < ctx.txt
+mirethstm console [--model ID] [--device D] [--host 127.0.0.1] [--port 8766] [--no-tarnlight]
 ```
 
 - stdin is the state, read as UTF-8 exactly as given (a final newline is part of the state). By default it is a plain string; with `--state-json` it is parsed as JSON.
 - `s.json` holds a TypeSafe `questions` map.
 - Prints the `decide` result as JSON on stdout (non-ASCII escaped, so any Windows console can print it).
-- Exit code 2, message on stderr, before any model loads: `SchemaError`, unreadable or invalid JSON input, non-UTF-8 stdin, `--chunk-size` below 1, `--temperature` not above 0.
+- Exit code 2, message on stderr, before any model loads: `SchemaError`, unreadable or invalid JSON input, non-UTF-8 stdin, `--batch-tokens` below 1, `--temperature` not above 0.
 - In Windows PowerShell 5.1, pipe-free: `cmd /c "mirethstm decide --schema s.json < ctx.txt"` (a PowerShell pipe re-encodes the text and corrupts non-ASCII characters).
 
 ## 6. HTTP server (cut second)
@@ -219,26 +227,57 @@ Any new key needs a new schema version and the founder's sign-off.
 - Shipped defaults: `mirethstm.calibration.DEFAULT_TEMPERATURES = {model_id: T}`, filled from the benchmark's calibration splits before release (empty until then, so T = 1.0).
 - Accuracy and macro-F1 do not change with T (argmax is invariant); a test enforces it.
 
-## 10. Console
+## 10. Console (founder ruling 2026-09-30: a race view like the original demo)
 
-Must ship (founder's list): a minimal console that tails the event log and plots confidence.
+### 10.1 Race view
 
-- `mirethstm console [--log events.jsonl] [--port 8766]`: Python standard library only. Serves one HTML page; the page polls for new lines and draws, per field, a scrolling line of `p` over time, a gauge for the latest call and a feed of recent calls.
-- Optional Tarnlight tap (the founder's existing public console, `docs/research/08-console-integration.md`): when `~/.tarnlight/inbox/` exists, append one envelope per call to `mirethstm-<UTC YYYY-MM-DDTHH>.jsonl`: `{"v": 1, "ts": <epoch seconds>, "source": "mirethstm", "request": {model, state, questions}, "response": <the /v1/systemone body>, "latency_ms": ..., "status": 200, "cost_est_micro": 0}`. Never creates the folder, one write per call, never raises, skips when the disk has under 1 GB free.
+`mirethstm console [--model ID] [--device D] [--host 127.0.0.1] [--port 8766] [--no-tarnlight]`. Python standard library server (`http.server`, threaded) plus one page whose HTML, CSS and JS ship in the package. No CDN, no build step, works offline. The live feed of past decisions is Tarnlight's job (10.3), not this page's.
+
+Look and feel follows the original demo by Harsha Gundala (parallel vs normal inference, see `docs/research/02-rlcd-and-ports.md`); our own HTML, CSS, JS and scenario text, nothing copied (founder rule: take the shape, never the expression).
+
+- Light page. Top bar: scenario picker, model picker, a "Run comparison" button (shows "Running..." while busy).
+- Under it, after a run: a green pill, `5.6x faster · 296 ms vs 1670 ms`.
+- Two cards side by side (stacked on a narrow screen):
+  - Left, "MirethSTM1 (<model>)": a green milliseconds badge; the answers as monospace JSON with blue keys, one line per field, all at once: noul and choice `{"value": ..., "prob": ...}`, score `{"value": <top level>, "prob": ..., "score": <expected level>}`.
+  - Right, "Normal generation (<model>)": a grey milliseconds badge that ticks live; the model's own JSON appearing token by token as it is generated; when done, a red badge "N fields hallucinated" (and "invalid JSON" if it does not parse).
+- The state text of the chosen scenario is shown in an editable box, so a run can use any text.
+- Order: the MirethSTM1 run first, then the normal generation; each badge is that run's own wall time. One run at a time (one GPU).
+- Model picker: Qwen/Qwen2.5-1.5B-Instruct (default: the original demo's model, match it first), Qwen/Qwen3-1.7B, Qwen/Qwen3-4B-Instruct-2507, Qwen/Qwen3-0.6B, plus `--model` if it is another id. Switching frees the old model before loading the new one; the page shows "Loading <model>...".
+- Built-in scenarios, our own neutral text: support ticket triage (28 fields), code change security review (28 fields), incident triage with score questions (about 20 fields), a 255-option request router (4 fields, one with 255 options).
+- Every MirethSTM1 run goes through `Engine.decide`, so it feeds Tarnlight (10.3) and the event log like any other call.
+
+### 10.2 Normal-generation baseline
+
+`mirethstm.baseline.generate(engine, context, schema, on_text=None) -> dict`, shared by the console and the benchmark:
+
+- Same model, same system prompt and question blocks (SPEC 3.1), but the closing rule asks for ONE JSON object holding every key `q1`..`qn` in order. Rendered with `prefix_ids(tokenizer, state, questions, rules=BASELINE_RULES)`, so caller text is encoded safely (3.3).
+- Greedy decoding, stop at end of turn, `max_new_tokens` bounded from the questions (enough for the longest label of each question plus JSON syntax).
+- `on_text(chunk)` is called as text is generated (streaming).
+- Returns `text` (the raw output), `answers` (question id to the parsed value or `None`), `valid_json` (bool), `hallucinated` (ids whose value is not an allowed answer: noul not a bool, choice not an exact option name, score not an integer level in range), `missing` (ids absent from the output), `latency_ms`, `output_tokens`.
+
+### 10.3 Tarnlight tap
+
+Feeds Tarnlight (the founder's public live console, `docs/research/08-console-integration.md`) without depending on it: on by default (`tarnlight=True`, `--no-tarnlight` turns it off), and it does nothing unless `~/.tarnlight/inbox/` already exists (Tarnlight creates it; we never do).
+
+- After each `decide`, append one line to `~/.tarnlight/inbox/mirethstm-<UTC YYYY-MM-DDTHH>.jsonl`: `{"v": 1, "ts": <epoch seconds>, "source": "mirethstm", "request_id": <id>, "request": {"model", "state", "questions"}, "response": <the /v1/systemone body: model, answers, usage, numbers rounded to 2 decimals>, "latency_ms": ..., "status": 200, "cost_est_micro": 0}`.
+- One append write per call (Tarnlight has no dedup), UTF-8, `\n`. Skips when the disk has under 1 GB free. Never raises: a failed write must not fail the decision.
 
 ## 11. Models and environment
 
+Any Hugging Face causal LM with a chat template plugs in: `Engine.load("<hub id or local path>")`, `--model`, or the console's model picker. The engine uses only `get_decoder()`, `get_output_embeddings()` and the tokenizer's chat template. Tested families: Qwen2.5 and Qwen3.
+
 | Role | Model | License | Notes |
 | --- | --- | --- | --- |
-| Default | Qwen/Qwen3-4B-Instruct-2507 | Apache-2.0 | Non-thinking only |
+| Match first | Qwen/Qwen2.5-1.5B-Instruct | Apache-2.0 | The original demo's model; console default. Match its speed, then compare |
+| Default SDK/CLI | Qwen/Qwen3-4B-Instruct-2507 | Apache-2.0 | Non-thinking only |
 | Fast | Qwen/Qwen3-1.7B | Apache-2.0 | Hybrid thinking; `enable_thinking=False` |
 | CPU tests | Qwen/Qwen3-0.6B | Apache-2.0 | fp32 on CPU (bf16 on this CPU is about 500x slower) |
 | Not used | Qwen2.5-3B | Qwen Research License (non-commercial) | |
-| Deferred | Qwen3.5 small models | Apache-2.0 | Hybrid linear attention; the plain KV-cache copy does not apply |
+| Deferred | Qwen3.5 small models | Apache-2.0 | Hybrid linear attention; the plain KV cache does not apply |
 
 - Tested stack: Python 3.11, torch 2.11.0+cu128 (arch list includes `sm_120`), transformers 5.18.0, `attn_implementation="sdpa"`. No flash-attn, no Triton, no torch.compile.
 - The cu128 index stops at torch 2.11. torch 2.14.x on cu130 is the path after launch.
 
 ## 12. Out of scope for v0.1
 
-Packed-mask or tree batching; vLLM, llama.cpp and MLX backends; fine-tuning; Qwen3.5 hybrid models; a numeric min/max score range (the level list covers Yelp 1 to 5); length-normalized scoring (a benchmark option later, not the default); multi-GPU; streaming.
+Tree batching (one shared copy of each question's suffix); vLLM, llama.cpp and MLX backends; fine-tuning; Qwen3.5 hybrid models; a numeric min/max score range (the level list covers Yelp 1 to 5); length-normalized scoring (a benchmark option later, not the default); multi-GPU.

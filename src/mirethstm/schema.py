@@ -96,11 +96,11 @@ def _block(k, q):
     return "\n".join(lines)
 
 
-def render_user(state, questions):
+def render_user(state, questions, rules=ANSWER_RULES):
     """The user message of SPEC 3.1. Questions are numbered q1, q2, ... in request order."""
     state_text = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False, indent=2)
     blocks = "\n\n".join(_block(k, q) for k, q in enumerate(questions.values(), 1))
-    return f"State:\n{state_text}\n\nQuestions:\n{blocks}\n\n{ANSWER_RULES}"
+    return f"State:\n{state_text}\n\nQuestions:\n{blocks}\n\n{rules}"
 
 
 def labels(q):

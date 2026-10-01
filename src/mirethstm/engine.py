@@ -32,17 +32,18 @@ def encode(tokenizer, text):
     return [i for piece in pieces for i in tokenizer.encode(piece, add_special_tokens=False)]
 
 
-def prefix_ids(tokenizer, state, questions):
+def prefix_ids(tokenizer, state, questions, rules=sch.ANSWER_RULES):
     """The chat-templated prompt (system + user + generation prompt) that is prefilled once.
 
     Only the template's own text yields control tokens; the user message is encoded as plain text.
+    `rules` closes the user message (the baseline asks for one JSON object instead).
     """
     messages = [{"role": "system", "content": sch.SYSTEM_PROMPT}, {"role": "user", "content": _SLOT}]
     head, tail = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True, enable_thinking=False,
     ).split(_SLOT)
     return (tokenizer.encode(head, add_special_tokens=False)
-            + encode(tokenizer, sch.render_user(state, questions))
+            + encode(tokenizer, sch.render_user(state, questions, rules))
             + tokenizer.encode(tail, add_special_tokens=False))
 
 
