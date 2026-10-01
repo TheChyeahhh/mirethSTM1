@@ -175,7 +175,7 @@ def test_models_and_switch(server):
 def test_picker_offers_the_approved_models():
     ids = [m.id for m in approved()]
     assert ids == ["Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B-Instruct-2507",
-                   "Qwen/Qwen3-0.6B"]  # SPEC 10.1 order, the console default first
+                   "Qwen/Qwen3-0.6B", "HuggingFaceTB/SmolLM3-3B"]  # SPEC 10.1 order, the console default first
     assert console.DEFAULT_MODEL == ids[0]
     assert console.picker(console.DEFAULT_MODEL) == console.picker("Qwen/Qwen3-0.6B") == ids
     assert console.picker("some/other-model") == ids + ["some/other-model"]  # --model takes any id
@@ -184,7 +184,7 @@ def test_picker_offers_the_approved_models():
 def test_picker_entries_carry_a_note():
     first = entry("Qwen/Qwen2.5-1.5B-Instruct")
     assert (first["name"], first["title"], first["description"]) == (
-        "Qwen/Qwen2.5-1.5B-Instruct", "Qwen2.5 1.5B Instruct", "Match first, not approved yet")
+        "Qwen/Qwen2.5-1.5B-Instruct", "Qwen2.5 1.5B Instruct", "Match first, 98 ms for 28 fields, 71% accuracy")
     unvetted = entry("some/other-model")
     assert unvetted["name"] == unvetted["title"] == "some/other-model"
     assert unvetted["status"] == "unvetted" and "approved list" in unvetted["description"]

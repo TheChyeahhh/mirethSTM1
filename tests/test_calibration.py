@@ -33,8 +33,10 @@ def macro_f1(pred, gold, k):
     return float(np.mean(scores))
 
 
-def test_default_temperatures_empty_until_release():
-    assert DEFAULT_TEMPERATURES == {}
+def test_default_temperatures_are_fitted_values():
+    # The pooled T per approved model; each model's own entry in mirethstm.models must match (test_api).
+    assert DEFAULT_TEMPERATURES
+    assert all(isinstance(t, float) and 1.0 < t < 20.0 for t in DEFAULT_TEMPERATURES.values())
 
 
 def test_fit_temperature_recovers_known_t():

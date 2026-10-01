@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from mirethstm import baseline, console, models
+from mirethstm import baseline, calibration, console, models
 from mirethstm.engine import systemone_body
 from mirethstm.models import approved, entry
 
@@ -283,23 +283,38 @@ def test_candidate_list_follows_the_spec():
         assert chr(0x2014) not in m.name + m.role + models.note(m)
 
 
-def test_approved_models_wait_for_their_numbers():
+MEASURED = ("ms_28_fields", "ms_router", "accuracy", "ece", "temperature", "measured_on")
+
+
+def test_approved_models_carry_their_numbers():
     assert {m.id: m.status for m in approved()} == dict.fromkeys(
-        ["Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B-Instruct-2507", "Qwen/Qwen3-0.6B"],
-        models.PENDING)
-    measured = ("ms_28_fields", "ms_router", "accuracy", "ece", "temperature", "measured_on")
-    assert all(getattr(m, key) is None for m in models.MODELS for key in measured)
-    assert all(m.status == models.CANDIDATE for m in models.MODELS if m not in approved())
+        ["Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B-Instruct-2507", "Qwen/Qwen3-0.6B",
+         "HuggingFaceTB/SmolLM3-3B"], models.APPROVED)
+    for m in approved():
+        assert all(getattr(m, key) is not None for key in MEASURED) and m.role and not m.reason
+        assert 0 < m.ms_28_fields < m.ms_router and 0 < m.ece < m.accuracy <= 1 and m.temperature > 0
+        assert re.fullmatch(r"RTX 5070, bf16, \d{4}-\d\d-\d\d", m.measured_on)
+        assert calibration.DEFAULT_TEMPERATURES[m.id] == m.temperature  # the shipped T is the listed one
+    assert set(calibration.DEFAULT_TEMPERATURES) == {m.id for m in approved()}
     assert models.get("Qwen/Qwen2.5-3B-Instruct") is None  # non-commercial license: never listed
+
+
+def test_rejected_models_say_why():
+    rejected = [m for m in models.MODELS if m not in approved()]
+    assert {m.id for m in rejected} == {"Qwen/Qwen2.5-0.5B-Instruct", "microsoft/Phi-4-mini-instruct",
+                                        "ibm-granite/granite-3.3-2b-instruct"}
+    for m in rejected:
+        assert m.status == models.REJECTED and m.reason and "\n" not in m.reason
+        assert all(getattr(m, key) is None for key in MEASURED)
 
 
 def test_note_shows_numbers_once_measured():
     m = models.get("Qwen/Qwen2.5-1.5B-Instruct")
-    assert models.note(m) == "Match first, not approved yet"
-    done = dataclasses.replace(m, status=models.APPROVED, ms_28_fields=189.6, accuracy=0.912, ece=0.03,
-                               temperature=1.4, ms_router=401.0, measured_on="2026-10-03")
-    assert models.note(done) == "Match first, 190 ms for 28 fields, 91% accuracy"
-    assert models.note(models.get("HuggingFaceTB/SmolLM3-3B")) == "Not evaluated yet"
+    assert models.note(m) == "Match first, 98 ms for 28 fields, 71% accuracy"
+    waiting = dataclasses.replace(m, status=models.PENDING, **dict.fromkeys(MEASURED))
+    assert models.note(waiting) == "Match first, not approved yet"
+    assert models.note(dataclasses.replace(waiting, role="", status=models.CANDIDATE)) == "Not evaluated yet"
+    assert models.note(models.get("ibm-granite/granite-3.3-2b-instruct")).startswith("Not approved: Engine.load")
 
 
 # --- real model --------------------------------------------------------------------------------

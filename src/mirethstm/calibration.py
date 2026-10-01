@@ -4,8 +4,15 @@ import math
 
 import numpy as np
 
-# Filled from the benchmark's calibration splits before release; empty means T = 1.0.
-DEFAULT_TEMPERATURES: dict[str, float] = {}
+# The pooled T fitted on the benchmark's calibration splits, per approved model (docs/benchmark.md,
+# Calibration). A model not listed here gets T = 1.0.
+DEFAULT_TEMPERATURES: dict[str, float] = {
+    "Qwen/Qwen2.5-1.5B-Instruct": 2.285,
+    "Qwen/Qwen3-1.7B": 6.750,
+    "Qwen/Qwen3-4B-Instruct-2507": 8.036,
+    "Qwen/Qwen3-0.6B": 3.830,
+    "HuggingFaceTB/SmolLM3-3B": 2.677,
+}
 
 T_MIN = 0.05
 T_MAX = 20.0

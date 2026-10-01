@@ -6,6 +6,7 @@ import json
 import pytest
 
 from mirethstm import cli
+from mirethstm.calibration import DEFAULT_TEMPERATURES
 
 QUESTIONS = {"sport": {"type": "noul", "instructions": "Is this about sport?"}}
 RESULT = {"model": "stub", "answers": {"sport": {"type": "noul", "noul": 0.9}},
@@ -149,4 +150,5 @@ def test_end_to_end(engine, monkeypatch, tmp_path, capsys):
     assert result["answers"]["topic"]["choice"] == "Sports"
     lines = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     assert [line["field"] for line in lines] == ["sport", "topic"]
-    assert all(line["id"] == result["id"] and line["T"] == 1.0 for line in lines)
+    shipped = DEFAULT_TEMPERATURES.get(engine.model_id, 1.0)  # no --temperature: the model's shipped T
+    assert all(line["id"] == result["id"] and line["T"] == shipped for line in lines)
