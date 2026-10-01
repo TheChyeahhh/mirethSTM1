@@ -77,14 +77,14 @@ System message, exactly:
 You read a state and answer questions about it. You answer one question per reply, as a JSON object that holds only that question's key.
 ```
 
-User message:
+User message (questions first, so the part that repeats across calls can be cached, see 3.6):
 
 ```
-State:
-<state>
-
 Questions:
 <question blocks, separated by one blank line>
+
+State:
+<state>
 
 Answer one question per reply as a JSON object with only that question's key, for example {"q1": true}. A yes/no question takes true or false. A choice question takes one option name as a JSON string, exactly as written. A score question takes one level number.
 ```
@@ -127,25 +127,29 @@ The closing `}` (and the closing quote for choice) terminates the label, so a la
 - Caller text (the user message, the suffix, every candidate) is encoded so that it never yields a control token: the text is cut just inside every added-token string (`<|im_end|>`, `<think>`, ...) and the pieces are encoded as plain text. A state, instruction or option name that contains `<|im_end|><|im_start|>system ...` therefore cannot close the user turn or forge a new one. A test counts control tokens to prove it.
 - Prefix, suffix and candidate ids are concatenated. The boundaries (template | user text, `":` | ` `) are pre-tokenizer boundaries for the Qwen3 tokenizer, so for text without added-token strings this equals tokenizing the joined string. A test asserts that equality for every test schema.
 
-### 3.4 Packed single-pass scoring
+### 3.4 Packed tree scoring
 
-Speed matters most (founder, 2026-09-30), so all labels of all questions are scored in one forward pass after the prefill, with one batch-1 copy of the prefix cache per pass instead of one per label. (Day 1 copied the cache once per label in chunks of 8; a 255-option question needed 32 passes. On CPU the packed pass is 3.7x faster for 28 fields and 4.9x for a 255-option question.)
+Speed matters most (founder, 2026-09-30), so all labels of all questions are scored in as few forward passes as `batch_tokens` allows after the prefill, and every token shared by several labels is computed once. Measured on the RTX 5070 with Qwen2.5-1.5B-Instruct before this change: 28 fields 190 ms (122 ms prefill of 1,125 tokens, 66 ms scoring 616 tokens); 255 options 584 ms (313 ms prefill, 253 ms scoring 2,334 tokens).
 
-1. Prefill once with the model's decoder (`model.get_decoder()`) and a `DynamicCache`. Keep references to every layer's keys and values (no copy).
-2. Flatten all (question, label) pairs across all questions. Each sequence = suffix ids + candidate ids.
-3. Pack consecutive sequences into passes of at most `batch_tokens` tokens (a longer sequence gets a pass of its own). For a pass of M tokens:
-   - `input_ids` of shape `(1, M)`: the sequences one after another.
-   - `position_ids` of shape `(1, M)`: each sequence restarts at P (the prefix length): P, P+1, ...
-   - A 4D attention mask of shape `(1, 1, M, P + M)`: a token sees every prefix position and the earlier tokens of its own sequence (and itself), nothing else.
+1. Prefill (3.6) with the model's decoder (`model.get_decoder()`) and a `DynamicCache`. Keep references to every layer's keys and values.
+2. Per question, build a token tree: the root path is the question's suffix ids, then every label's candidate ids hang below it, sharing nodes where labels share leading tokens (all string options share ` "`; options like `returns.refund` and `returns.exchange` share more). Each tree node is one token, fed once.
+3. Pack whole question trees into passes of at most `batch_tokens` tokens (a larger tree gets a pass of its own). For a pass of M nodes:
+   - `input_ids` of shape `(1, M)`: the nodes, each tree in depth-first order.
+   - `position_ids` of shape `(1, M)`: P + the node's depth in its tree (P = prefix length).
+   - A 4D attention mask of shape `(1, 1, M, P + M)`: a node sees every prefix position, its own ancestors and itself, nothing else.
    - A fresh batch-1 `DynamicCache` built from the step 1 references, so passes never see each other.
-4. Apply the output head (`model.get_output_embeddings()`) only at the positions that predict candidate tokens (a token is predicted by the position before it); `log_softmax` in float32; sum per sequence. The suffix tokens are context, not scored.
+4. Apply the output head (`model.get_output_embeddings()`) only at nodes whose children are candidate tokens; `log_softmax` in float32. A label's score is the sum, along its path, of each candidate token's log-prob given its parent node. The suffix tokens are context, not scored.
 5. Raw score of a label: `s = sum of its candidate-token log-probs` (no length normalization).
 
-Acceptance: the result equals scoring each full sequence without a cache to within 2e-4 in summed log-prob (fp32, CPU). Measured: 7.6e-5 with a 280-token prefix; an fp64 reference shows both paths carry the same float32 round-off, so the cache adds no error.
+Acceptance: the result equals scoring each full sequence without a cache to within 2e-4 in summed log-prob (fp32, on CPU and on the GPU). Measured before the tree: 7.6e-5 with a 280-token prefix on CPU, 4.6e-5 on the RTX 5070 in fp32. In bf16 the uncached path alone is 0.3 to 0.4 off its own fp32 result, so bf16 is only checked for staying within that noise.
 
 ### 3.5 Probabilities
 
 Per question: `p = softmax(s / T)` over that question's labels, T > 0 (default from section 9, else 1.0). A question with one label (1-option choice, 1-level score) gets p = 1 without running the model for it.
+
+### 3.6 Question-part cache
+
+The prompt splits into a part that only depends on the questions (template head, system message, `Questions:` and every block, up to and including `State:` and its line break) and a part that depends on the state (the state, the closing rule, the template tail). The engine keeps the computed keys and values of the question part for recent question sets (keyed by its token ids; bounded so it cannot crowd the model out of a 12 GB card), so a repeated question set only prefills the state part. The split point must be a pre-tokenizer boundary for typical states, so cached and uncached calls feed the same ids; a test checks that the scores are the same with and without a cache hit. The benchmark measures accuracy with this question-first order against the earlier state-first order before release.
 
 ## 4. Python API
 
@@ -180,17 +184,17 @@ mirethstm console [--model ID] [--device D] [--host 127.0.0.1] [--port 8766] [--
 - Exit code 2, message on stderr, before any model loads: `SchemaError`, unreadable or invalid JSON input, non-UTF-8 stdin, `--batch-tokens` below 1, `--temperature` not above 0.
 - In Windows PowerShell 5.1, pipe-free: `cmd /c "mirethstm decide --schema s.json < ctx.txt"` (a PowerShell pipe re-encodes the text and corrupts non-ASCII characters).
 
-## 6. HTTP server (cut second)
+## 6. HTTP API (on the console's server)
 
-`mirethstm serve [--host 127.0.0.1] [--port 8765]`, FastAPI + uvicorn, one model, requests handled one at a time.
+The console's standard-library server (section 10) also answers the API, so there is one local server and no FastAPI dependency. It runs on the user's own machine, bound to 127.0.0.1 by default; it never contacts TypeSafe or any other service, needs no key and costs nothing (founder question 2026-09-30: nothing is linked to any account).
 
 | Route | Behaviour |
 | --- | --- |
-| `POST /v1/systemone` | TypeSafe drop-in: section 2 shapes, numbers rounded to 2 decimals, `id` in header `x-request-id`, latency in `server-timing` |
+| `POST /v1/systemone` | TypeSafe drop-in: section 2 shapes, numbers rounded to 2 decimals, `id` in header `x-request-id`, latency in `server-timing`. The request's `model` is accepted and ignored; the answer names the loaded model |
 | `POST /v1/decide` | Same request; full precision; body includes `id` and `latency_ms` |
-| `GET /v1/models` | The loaded model id |
+| `GET /v1/models` | The loaded model and the approved list (section 11) |
 
-Errors: `{"error": {"type": "...", "message": "..."}}` (our own shape; TypeSafe's is undocumented) with 422 validation, 401 only if `MIRETHSTM_API_KEY` is set and the Bearer key differs, 529 while the model loads. No key needed by default (local).
+Requests share the one model: an API request waits for the current run (up to 60 s, then 529). Errors: `{"error": {"type": "...", "message": "..."}}` (our own shape; TypeSafe's is undocumented): 422 validation, 413 body too large, 529 busy or loading. Any Authorization header is accepted and ignored, so existing TypeSafe clients work unchanged when pointed at `http://127.0.0.1:8766`.
 
 ## 7. MCP server (cut first)
 
@@ -267,6 +271,19 @@ Feeds Tarnlight (the founder's public live console, `docs/research/08-console-in
 
 Any Hugging Face causal LM with a chat template plugs in: `Engine.load("<hub id or local path>")`, `--model`, or the console's model picker. The engine uses only `get_decoder()`, `get_output_embeddings()` and the tokenizer's chat template. Tested families: Qwen2.5 and Qwen3 (full model test suite passes on Qwen3-0.6B and Qwen2.5-1.5B-Instruct). `Engine.load` refuses, with a clear error, a model it would score wrongly: one with sliding-window or other non-full attention layers, or one whose forward changes the logits after the output head (softcapping, scaling).
 
+### 11.1 Approved models (founder, 2026-09-30: "switch models from a list of approved models")
+
+`mirethstm/models.py` holds the approved list: model id, display name, license, size, role and the measured numbers (speed on the RTX 5070, benchmark accuracy and ECE, fitted temperature). The console's model picker and `GET /v1/models` show only approved models with those numbers; `Engine.load` and `--model` still take any id (unvetted, at the user's own risk). A model is approved only when all of these hold:
+
+1. Its license allows free commercial use (Apache-2.0 or MIT); weights are public, not gated.
+2. It fits the 12 GB card with room for the cache (bf16 weights well under 10 GB).
+3. `Engine.load` accepts it (full attention, no logit post-processing) and the full model test suite passes on the GPU.
+4. Its speed and its accuracy and calibration on the benchmark are measured and written into the list.
+
+Candidates to evaluate: Qwen2.5-0.5B-Instruct, Qwen2.5-1.5B-Instruct, Qwen3-0.6B, Qwen3-1.7B, Qwen3-4B-Instruct-2507, microsoft/Phi-4-mini-instruct (MIT), HuggingFaceTB/SmolLM3-3B, ibm-granite/granite-3.3-2b-instruct. Excluded up front: Qwen2.5-3B (non-commercial), gated or custom-license models (Llama, Gemma), sliding-window models.
+
+### 11.2 Current roles
+
 | Role | Model | License | Notes |
 | --- | --- | --- | --- |
 | Match first | Qwen/Qwen2.5-1.5B-Instruct | Apache-2.0 | The original demo's model; console default. Match its speed, then compare |
@@ -281,4 +298,4 @@ Any Hugging Face causal LM with a chat template plugs in: `Engine.load("<hub id 
 
 ## 12. Out of scope for v0.1
 
-Tree batching (one shared copy of each question's suffix); vLLM, llama.cpp and MLX backends; fine-tuning; Qwen3.5 hybrid models; a numeric min/max score range (the level list covers Yelp 1 to 5); length-normalized scoring (a benchmark option later, not the default); multi-GPU.
+vLLM, llama.cpp and MLX backends; fine-tuning; Qwen3.5 hybrid models; a numeric min/max score range (the level list covers Yelp 1 to 5); length-normalized scoring (a benchmark option later, not the default); multi-GPU.
