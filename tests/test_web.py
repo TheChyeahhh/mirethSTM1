@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from mirethstm.console import WEB
+from mirethstm.models import approved, entry
 
 NODE = shutil.which("node")
 HARNESS = Path(__file__).with_name("web_harness.cjs")
@@ -84,6 +85,23 @@ def test_text_stays_text():
     text = '{"q1": "<b>bold?</b>"}'
     rows = page(f"renderGenerated({json.dumps(SC)}, {json.dumps(text)}); return dump('gen-out');")
     assert ["<b>bold?</b>" in t for t, c, _ in rows[1]["pieces"] if c == "v"] == [True]
+
+
+@needs_node
+def test_picker_shows_each_model_with_its_note():
+    listed = {"models": [entry(m.id) for m in approved()] + [entry("some/other-model")], "current": "Qwen/Qwen3-0.6B"}
+    got = page(f"""
+        const answers = {{ "/api/scenarios": [{json.dumps(SC)}], "/api/models": {json.dumps(listed)} }};
+        globalThis.fetch = async (path) => ({{ ok: true, json: async () => answers[path] }});
+        await init();
+        return {{ options: document.getElementById("model").children.map((o) => [o.value, o.textContent, o.title]),
+                  value: ui.model.value, title: text("ours-title") }};
+    """)
+    assert got["options"][0] == ["Qwen/Qwen2.5-1.5B-Instruct", "Qwen2.5 1.5B Instruct (Match first, not approved yet)",
+                                 "Qwen/Qwen2.5-1.5B-Instruct"]
+    assert [o[0] for o in got["options"]] == [m.id for m in approved()] + ["some/other-model"]
+    assert got["options"][-1][1] == "some/other-model (Unvetted: not on the approved list)"
+    assert got["value"] == "Qwen/Qwen3-0.6B" and got["title"] == "MirethSTM1 (Qwen3-0.6B)"
 
 
 def run_snippet(fetch_body):

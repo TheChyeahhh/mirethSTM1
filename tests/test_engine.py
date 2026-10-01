@@ -1,5 +1,6 @@
 """Engine tests. Tests marked `model` run the model under test (conftest.py, Qwen3-0.6B by default)."""
 
+import contextlib
 import json
 import math
 import re
@@ -8,14 +9,17 @@ import pytest
 import torch
 
 from mirethstm import Engine, SchemaError
-from mirethstm.engine import _passes, check_supported, encode, prefix_ids, systemone_body
+from mirethstm.engine import _passes, _tree, check_supported, encode, prefix_ids, systemone_body
+from mirethstm.scenarios import ROUTER_QUESTIONS, ROUTER_STATE, SCENARIOS
 from mirethstm.schema import SYSTEM_PROMPT, candidates, labels, render_user, suffix
+
+from conftest import tolerance
 
 STATE = {"ticket": {"subject": "Charged twice for my subscription",
                     "body": "I was billed two times this month. Please send my money back today."}}
 
-# 2 + 6 + 4 = 12 sequences of 6 to 21 tokens on the Qwen tokenizer. With a 16-token budget the
-# passes mix lengths, cross question boundaries, and the long option gets a pass of its own.
+# 2 + 6 + 4 = 12 labels of 6 to 21 tokens each on the Qwen tokenizer; every choice candidate
+# starts with ' "', and the long option is a long chain of its own.
 MIXED = {
     "refund": {"type": "noul", "instructions": "Is the customer asking for money back?",
                "criteria": {"true": "Asks for a refund", "false": "Does not"}},
@@ -29,14 +33,29 @@ MIXED = {
                 "criteria": ["No time pressure", "Can wait days", "Needs attention today", "Critical outage"]},
 }
 
+# MIXED plus labels whose trees branch late: options that share leading words, and labels that
+# are a prefix of another label's text ("Sci" < "Sci-Tech" < "Sci-Tech news").
+TREES = {
+    **MIXED,
+    "plan": {"type": "choice", "instructions": "Which plan change does the customer ask for?",
+             "criteria": {"move to the yearly plan": None, "move to the monthly plan": None,
+                          "move to the free plan": None, "cancel the plan": None}},
+    "desk": {"type": "choice", "instructions": "Which news desk is this for?",
+             "criteria": {"Sci": None, "Sci-Tech": None, "Sci-Tech news": None, "Sports": None}},
+    "chargeback": {"type": "noul", "instructions": "Does the customer threaten a chargeback?"},
+}
+
 
 def qwen_tokenizer(tokenizer):
     """True for the byte-level BPE shared by Qwen2.5 and Qwen3, whose token boundaries some tests spell out."""
     return tokenizer.get_added_vocab().get("<|im_end|>") == 151645
 
 
-def reference_scores(engine, state, schema):
-    """Summed candidate log-probs from one full uncached forward per sequence."""
+def reference_scores(engine, state, schema, only=None):
+    """Summed candidate log-probs from one full uncached forward per sequence.
+
+    `only` ({question id: [labels]}) limits the work to those labels.
+    """
     tok, model = engine.tokenizer, engine.model
     prefix = prefix_ids(tok, state, schema)
     out = {}
@@ -44,12 +63,15 @@ def reference_scores(engine, state, schema):
         suf = encode(tok, suffix(k))
         out[qid] = {}
         for label, cand in zip(labels(q), candidates(q)):
+            if only is not None and label not in only.get(qid, ()):
+                continue
             cand_ids = encode(tok, cand)
             ids = torch.tensor([prefix + suf + cand_ids], device=model.device)
             with torch.inference_mode():
-                logp = model(input_ids=ids).logits[0].float().log_softmax(-1)
-            start = len(prefix) + len(suf)
-            out[qid][label] = sum(logp[start + j - 1, t].item() for j, t in enumerate(cand_ids))
+                # The forward runs over the whole sequence; logits are kept only for the last
+                # len(cand) + 1 positions, so candidate token j is read at row j.
+                logp = model(input_ids=ids, logits_to_keep=len(cand_ids) + 1).logits[0].float().log_softmax(-1)
+            out[qid][label] = sum(logp[j, t].item() for j, t in enumerate(cand_ids))
     return out
 
 
@@ -68,13 +90,29 @@ def test_invalid_settings():
     assert Engine(None, None, "m", batch_tokens=1).batch_tokens == 1
 
 
-def test_passes_pack_in_order_within_the_budget():
-    # Sequence sizes 5, 7, 3, 18, 2 with a budget of 10: 7 + 3 fills a pass exactly, and 18 is
+def test_tree_shares_leading_tokens():
+    # Suffix 1 2; the candidates share their leading tokens 5 and 5 6, and all end in 9.
+    tree = _tree([1, 2], [[5, 6, 9], [5, 7, 9], [5, 6, 8, 9], [4, 9]])
+    #                 node  0  1  2  3  4  5  6  7  8  9  10
+    assert tree.tokens == [1, 2, 5, 6, 9, 8, 9, 7, 9, 4, 9]
+    assert tree.depths == [0, 1, 2, 3, 4, 4, 5, 3, 4, 2, 3]
+    assert tree.ends == [11, 11, 9, 7, 5, 7, 7, 9, 9, 11, 11]
+    assert tree.paths == [[(1, 5), (2, 6), (3, 9)], [(1, 5), (2, 7), (7, 9)],
+                          [(1, 5), (2, 6), (3, 8), (5, 9)], [(1, 4), (9, 9)]]
+    # Node i sees node j when j <= i < ends[j]: exactly its ancestors and itself.
+    sees = lambda i: {j for j in range(i + 1) if i < tree.ends[j]}  # noqa: E731
+    assert sees(6) == {0, 1, 2, 3, 5, 6}  # the 9 after 5 6 8
+    assert sees(8) == {0, 1, 2, 7, 8}     # the 9 after 5 7
+    assert sees(10) == {0, 1, 9, 10}      # the 9 after 4
+
+
+def test_passes_pack_whole_trees_in_order_within_the_budget():
+    # Trees of 5, 7, 3, 18 and 2 nodes with a budget of 10: 7 + 3 fills a pass exactly, and 18 is
     # alone because it is over the budget by itself.
-    seqs = [([1] * 3, [2] * 2), ([3] * 3, [4] * 4), ([5] * 2, [6]), ([7] * 9, [8] * 9), ([9], [9])]
-    assert list(_passes(seqs, 10)) == [seqs[0:1], seqs[1:3], seqs[3:4], seqs[4:5]]
-    assert list(_passes(seqs, 1)) == [[s] for s in seqs]
-    assert list(_passes(seqs, 35)) == [seqs]
+    trees = [_tree([1] * (n - 1), [[2]]) for n in (5, 7, 3, 18, 2)]
+    assert list(_passes(trees, 10)) == [trees[0:1], trees[1:3], trees[3:4], trees[4:5]]
+    assert list(_passes(trees, 1)) == [[t] for t in trees]
+    assert list(_passes(trees, 35)) == [trees]
     assert list(_passes([], 10)) == []
 
 
@@ -157,6 +195,7 @@ def loads(monkeypatch):
             return Fake()
 
         def to(self, device):
+            calls.append(("to", device))
             return self
 
         def eval(self):
@@ -191,12 +230,22 @@ def test_load_passes_settings_to_the_engine(loads):
     assert loads.count(("checked", "m")) == 2  # every loaded model is checked before use
 
 
-def tiny(config_class, **settings):
+def test_load_without_a_visible_gpu_uses_the_cpu(loads, monkeypatch):
+    # CUDA_VISIBLE_DEVICES="" leaves torch.cuda.is_available() True with no device to use.
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
+    Engine.load("m")
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    Engine.load("m")
+    assert [c for c in loads if c[0] == "to"] == [("to", "cpu"), ("to", "cuda")]
+
+
+def tiny(config_class, vocab_size=64, seed=0, **settings):
     """A randomly initialised two-layer model, built from a config without any download."""
     from transformers import AutoModelForCausalLM
 
-    torch.manual_seed(0)
-    config = config_class(vocab_size=64, hidden_size=16, intermediate_size=32, num_hidden_layers=2,
+    torch.manual_seed(seed)
+    config = config_class(vocab_size=vocab_size, hidden_size=16, intermediate_size=32, num_hidden_layers=2,
                           num_attention_heads=2, num_key_value_heads=1, **settings)
     return AutoModelForCausalLM.from_config(config, dtype=torch.float32, attn_implementation="sdpa").eval()
 
@@ -250,18 +299,88 @@ def test_joint_tokenization_equals_concatenation(tokenizer):
                     assert joint == prefix + encode(tokenizer, suf) + encode(tokenizer, cand), (suf, cand)
 
 
+def test_console_scenario_trees(tokenizer):
+    # Every label's path spells its candidate, step by step down the tree, and the trees feed
+    # fewer tokens than the flat sequences did.
+    for scenario in SCENARIOS:
+        nodes = flat = 0
+        for k, q in enumerate(scenario["questions"].values(), 1):
+            suf = encode(tokenizer, suffix(k))
+            cands = [encode(tokenizer, cand) for cand in candidates(q)]
+            tree = _tree(suf, cands)
+            assert tree.tokens[:len(suf)] == suf and tree.depths[:len(suf)] == list(range(len(suf)))
+            for cand, path in zip(cands, tree.paths):
+                assert [token for _, token in path] == cand
+                assert path[0][0] == len(suf) - 1
+                for depth, ((_, token), (parent, _)) in enumerate(zip(path, path[1:]), len(suf)):
+                    assert (tree.tokens[parent], tree.depths[parent]) == (token, depth)
+            # One node per distinct (parent, token) step.
+            assert len(tree.tokens) == len(suf) + len({step for path in tree.paths for step in path})
+            nodes += len(tree.tokens)
+            flat += sum(len(suf) + len(c) for c in cands)
+        assert nodes < flat, scenario["id"]
+
+
 def test_labels_are_encoded_once_per_engine(tokenizer, monkeypatch):
     import mirethstm.engine as engine_module
 
     real, seen = engine_module.encode, []
     monkeypatch.setattr(engine_module, "encode", lambda tok, text: seen.append(text) or real(tok, text))
     engine = Engine(None, tokenizer, "m")
-    engine._score_ids = lambda prefix, seqs: [0.0] * len(seqs)  # stands in for the model
+    engine._score_trees = lambda prompt, trees: [[0.0] * len(t.paths) for t in trees]  # stands in for the model
     engine.score(STATE, MIXED)
     assert sum(text == candidates(MIXED["topic"])[0] for text in seen) == 1
     first = len(seen)
     engine.score("Another state", MIXED)
     assert len(seen) == first + 1  # only the new user message
+
+
+def tiny_engine(tokenizer, seed=0, **settings):
+    """An engine on a random two-layer fp32 model that takes the real tokenizer's ids: fast enough
+    to check every label against the uncached reference."""
+    from transformers import Qwen3Config
+
+    model = tiny(Qwen3Config, vocab_size=len(tokenizer), seed=seed, head_dim=8)
+    return Engine(model, tokenizer, f"tiny-{seed}", tarnlight=False, **settings)
+
+
+@contextlib.contextmanager
+def forwards(model):
+    """Records (tokens fed, tokens already in the cache) for every decoder forward while open."""
+    seen = []
+
+    def record(module, args, kwargs):
+        cache = kwargs.get("past_key_values")
+        seen.append((kwargs["input_ids"].shape[1], 0 if cache is None else cache.get_seq_length()))
+
+    handle = model.get_decoder().register_forward_pre_hook(record, with_kwargs=True)
+    try:
+        yield seen
+    finally:
+        handle.remove()
+
+
+def one_pass_layout(tok, state, schema, batch_tokens):
+    """The forwards SPEC 3.4 asks for: the prompt and the first pass's tree nodes together in one
+    forward on an empty cache, then the nodes of each later pass on a cache holding the prompt only."""
+    plen = len(prefix_ids(tok, state, schema))
+    sizes = [sum(len(t.tokens) for t in p) for p in _passes(trees_of(tok, schema), batch_tokens)]
+    return [(plen + sizes[0], 0)] + [(m, plen) for m in sizes[1:]]
+
+
+@pytest.mark.parametrize("batch_tokens", [2048, 24, 1])
+def test_tree_scores_equal_uncached_on_a_tiny_model(tokenizer, batch_tokens):
+    # 2048: one forward holds the prompt and every tree. 24 and 1: many passes, only the first
+    # carrying the prompt, and trees larger than the whole budget (1: every tree on its own).
+    engine = tiny_engine(tokenizer, batch_tokens=batch_tokens)
+    for state, schema in [(STATE, TREES), (ROUTER_STATE, ROUTER_QUESTIONS)]:  # all 255 queues
+        with forwards(engine.model) as seen:
+            got = engine.score(state, schema)
+        assert seen == one_pass_layout(tokenizer, state, schema, batch_tokens)
+        assert (len(seen) == 1) == (batch_tokens == 2048)
+        ref = reference_scores(engine, state, schema)
+        assert {q: list(s) for q, s in got.items()} == {q: list(s) for q, s in ref.items()}
+        assert max_diff(got, ref) < 2e-4
 
 
 def test_prefix_ends_with_empty_think_block(tokenizer):
@@ -290,29 +409,69 @@ def test_control_text_in_content_stays_text(tokenizer):
 # --- model ----------------------------------------------------------------------------
 
 
+def max_diff(got, ref):
+    """Largest difference over the labels of `ref` (which may hold only some of them)."""
+    return max(abs(got[q][label] - ref[q][label]) for q in ref for label in ref[q])
+
+
+def trees_of(tok, schema):
+    return [_tree(encode(tok, suffix(k)), [encode(tok, cand) for cand in candidates(q)])
+            for k, q in enumerate(schema.values(), 1)]
+
+
 @pytest.mark.model
-@pytest.mark.parametrize("batch_tokens", [2048, 16])
-def test_cached_equals_uncached(engine, batch_tokens):
-    tok = engine.tokenizer
-    seqs = [(encode(tok, suffix(k)), encode(tok, cand))
-            for k, q in enumerate(MIXED.values(), 1) for cand in candidates(q)]
-    passes = list(_passes(seqs, batch_tokens))
+@pytest.mark.parametrize("batch_tokens", [2048, 24])
+def test_tree_scores_equal_uncached(engine, batch_tokens):
+    trees = trees_of(engine.tokenizer, TREES)
+    passes = list(_passes(trees, batch_tokens))
     if batch_tokens == 2048:
         assert engine.batch_tokens == 2048 and len(passes) == 1  # the default packs everything at once
     else:
-        # Many passes, several of them packed, and a sequence longer than the whole budget.
+        # Several passes, one of them packed, and a tree larger than the whole budget.
         assert len(passes) > 3 and any(len(p) > 1 for p in passes)
-        assert any(len(s) + len(c) > batch_tokens for s, c in seqs)
-    packed = Engine(engine.model, tok, engine.model_id, batch_tokens=batch_tokens)
-    got = packed.score(STATE, MIXED)
-    ref = reference_scores(engine, STATE, MIXED)
+        assert any(len(t.tokens) > batch_tokens for t in trees)
+    packed = Engine(engine.model, engine.tokenizer, engine.model_id, batch_tokens=batch_tokens)
+    with forwards(engine.model) as seen:
+        got = packed.score(STATE, TREES)
+    assert seen == one_pass_layout(engine.tokenizer, STATE, TREES, batch_tokens)
+    ref = reference_scores(engine, STATE, TREES)
     assert {q: list(s) for q, s in got.items()} == {q: list(s) for q, s in ref.items()}
-    diff = max(abs(got[q][label] - ref[q][label]) for q in ref for label in ref[q])
-    print(f"max abs diff cached vs uncached, {len(passes)} passes: {diff:.3e} ({engine.model.dtype})")
-    # SPEC 3.4. In bf16 the uncached path alone is 0.3 to 0.4 off its own fp32 result (RTX 5070,
-    # Qwen3-0.6B and Qwen2.5-1.5B), so bf16 can only show the paths stay within that noise.
-    tolerance = 2e-4 if engine.model.dtype == torch.float32 else 1.0
-    assert diff < tolerance
+    diff = max_diff(got, ref)
+    print(f"max abs diff tree vs uncached, {len(passes)} passes: {diff:.3e} ({engine.model.dtype})")
+    assert diff < tolerance(engine)
+
+
+# Router labels checked against the uncached reference (each one is a full forward of about
+# 2,000 tokens; the tiny-model test checks all 255): the first and last queue, queues sharing an
+# area or an action, multi-token actions.
+ROUTER_SAMPLE = {
+    "route": ["accounts.question", "returns.refund", "returns.question", "payments.refund",
+              "security.access_problem", "partners.other"],
+    "needs_human": ["true"],
+    "priority": ["urgent"],
+}
+
+
+@pytest.mark.model
+def test_router_tree_scores_equal_uncached(engine):
+    # The console's 255 "area.action" queues: one tree of several hundred nodes, far fewer than
+    # the flat tokens. The default budget packs all four trees into one pass; a budget of 16 gives
+    # every tree a pass of its own, each larger than the budget.
+    trees = trees_of(engine.tokenizer, ROUTER_QUESTIONS)
+    assert 255 < len(trees[0].tokens) < sum(len(path) for path in trees[0].paths)
+    assert len(list(_passes(trees, 2048))) == 1 and len(list(_passes(trees, 16))) == 4
+    ref = reference_scores(engine, ROUTER_STATE, ROUTER_QUESTIONS, only=ROUTER_SAMPLE)
+    by_budget = {}
+    for batch_tokens in (2048, 16):
+        scorer = Engine(engine.model, engine.tokenizer, engine.model_id, batch_tokens=batch_tokens)
+        with forwards(engine.model) as seen:
+            got = by_budget[batch_tokens] = scorer.score(ROUTER_STATE, ROUTER_QUESTIONS)
+        assert seen == one_pass_layout(engine.tokenizer, ROUTER_STATE, ROUTER_QUESTIONS, batch_tokens)
+        assert {q: list(s) for q, s in got.items()} == {q: labels(x) for q, x in ROUTER_QUESTIONS.items()}
+        diff = max_diff(got, ref)
+        print(f"max abs diff router tree vs uncached, budget {batch_tokens}: {diff:.3e} ({engine.model.dtype})")
+        assert diff < tolerance(engine)
+    assert max_diff(by_budget[16], by_budget[2048]) < tolerance(engine)  # all 255 queues agree
 
 
 def pick(engine, context, criteria):

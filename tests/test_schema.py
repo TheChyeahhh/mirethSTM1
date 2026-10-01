@@ -24,9 +24,8 @@ def many(n):
         ("s", {"q": "noul"}, "must be an object"),
         ("s", {"q": {"instructions": "x"}}, "unknown type"),
         ("s", {"q": {"type": "bool", "instructions": "x"}}, "unknown type"),
-        ("s", {"q": {"type": "noul"}}, "instructions"),
         ("s", {"q": {"type": "noul", "instructions": 5}}, "instructions"),
-        ("s", {"q": {"type": "noul", "instructions": None}}, "instructions"),
+        ("s", {"q": {"type": "choice", "instructions": True, "criteria": {"a": None}}}, "instructions"),
         ("s", {"q": {**NOUL, "criteria": "yes"}}, "noul criteria"),
         ("s", {"q": {**NOUL, "criteria": {"yes": "x"}}}, "noul criteria"),
         ("s", {"q": {**NOUL, "criteria": {"true": 1}}}, "descriptions"),
@@ -62,6 +61,11 @@ def test_validation_errors(state, questions, message):
         ("s", {"q": {**SCORE, "criteria": ["one level"]}}),
         ("s", {"q": {**SCORE, "criteria": [{"what": str(i)} for i in range(10)]}}),
         ("s", {"q": {"type": "choice", "instructions": {"task": "pick"}, "criteria": {"a": ["x", "y"]}}}),
+        # Instructions are optional for every type (TypeSafe's SDK sends Noul() and Choice(criteria=...)).
+        ("s", {"q": {"type": "noul"}}),
+        ("s", {"q": {"type": "noul", "instructions": None, "criteria": {"true": "Yes"}}}),
+        ("s", {"q": {"type": "choice", "criteria": {"a": None, "b": "second"}}}),
+        ("s", {"q": {"type": "score", "criteria": ["low", "high"]}}),
     ],
 )
 def test_valid_schemas(state, questions):
@@ -121,6 +125,17 @@ def test_string_state_verbatim_and_both_noul_criteria():
 def test_noul_without_criteria_has_one_line():
     text = render_user("s", {"x": NOUL})
     assert "\nq1 (yes/no): Yes?\n\nAnswer one question" in text
+
+
+def test_blocks_without_instructions_show_only_their_criteria():
+    questions = {"a": {"type": "noul"}, "b": {"type": "choice", "instructions": None, "criteria": {"x": None}},
+                 "c": {"type": "score", "criteria": ["low", "high"]}}
+    assert render_user("s", questions, rules="Own rules.") == (
+        "State:\ns\n\nQuestions:\n"
+        "q1 (yes/no):\n\n"
+        'q2 (choice):\n  Options:\n  - "x"\n\n'
+        "q3 (score, 0 to 1):\n  0: low\n  1: high\n\n"
+        "Own rules.")
 
 
 def test_continuations():

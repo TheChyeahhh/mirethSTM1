@@ -5,7 +5,7 @@ Research behind every decision here: `docs/research/` (start with `00-index.md`)
 
 ## 1. What it is
 
-MirethSTM1 answers typed questions about a context with a probability for every allowed answer. It does not generate text. It prefills the context and all questions once into a KV cache, then scores every allowed answer of every question as a whole label (all of the label's tokens), reusing that cache.
+MirethSTM1 answers typed questions about a context with a probability for every allowed answer. It does not generate text. One forward pass reads the context and the questions and scores every allowed answer of every question as a whole label (all of the label's tokens), as token trees in the same pass.
 
 It is a free, Jev-style approximation of TypeSafe's Jev, not an equivalent. Jev is a trained model; MirethSTM1 is an inference method on a stock open model (Qwen3). Say this plainly wherever the project is described.
 
@@ -36,7 +36,7 @@ Matches the live TypeSafe API as captured on 2026-09-30 (`docs/research/04-types
 | `choice` | `instructions`; `criteria`: object, option name to description (description may be `null`) | 1 to 255 options. Option names are the labels, used verbatim |
 | `score` | `instructions`; `criteria`: ordered array of level descriptions | 1 to 10 levels (TypeSafe docs say 2 to 10; the live API accepts 1). Levels are addressed by 0-based index |
 
-- `instructions` and descriptions may be strings, objects or arrays. Non-strings are rendered as compact JSON.
+- `instructions` and descriptions may be strings, objects or arrays. Non-strings are rendered as compact JSON. `instructions` is optional for every type, as in TypeSafe's own SDK (`Noul()`, `Choice(criteria=...)`); without it the question block shows only its criteria.
 - Question ids are for code only. They never reach the model (the prompt uses `q1`, `q2`, ... in request order).
 - `model` is accepted and ignored for routing: the engine answers with the model it has loaded.
 - Validation failures raise `mirethstm.SchemaError` (HTTP 422): state not a string, object or array; unknown type; missing or wrong-typed fields; noul `criteria` keys other than `"true"`/`"false"`; empty option name; 0 or more than 255 options; 0 or more than 10 levels; a `null` score level; empty `questions`. A `null` noul description counts as absent.
@@ -77,14 +77,14 @@ System message, exactly:
 You read a state and answer questions about it. You answer one question per reply, as a JSON object that holds only that question's key.
 ```
 
-User message (questions first, so the part that repeats across calls can be cached, see 3.6):
+User message (the state first, the questions right before the answer: measured 2026-10-01, putting the questions first cut AG News accuracy on Qwen2.5-1.5B-Instruct from 0.84 to 0.48, and restating them after the state did not recover it):
 
 ```
-Questions:
-<question blocks, separated by one blank line>
-
 State:
 <state>
+
+Questions:
+<question blocks, separated by one blank line>
 
 Answer one question per reply as a JSON object with only that question's key, for example {"q1": true}. A yes/no question takes true or false. A choice question takes one option name as a JSON string, exactly as written. A score question takes one level number.
 ```
@@ -129,27 +129,23 @@ The closing `}` (and the closing quote for choice) terminates the label, so a la
 
 ### 3.4 Packed tree scoring
 
-Speed matters most (founder, 2026-09-30), so all labels of all questions are scored in as few forward passes as `batch_tokens` allows after the prefill, and every token shared by several labels is computed once. Measured on the RTX 5070 with Qwen2.5-1.5B-Instruct before this change: 28 fields 190 ms (122 ms prefill of 1,125 tokens, 66 ms scoring 616 tokens); 255 options 584 ms (313 ms prefill, 253 ms scoring 2,334 tokens).
+Speed matters most (founder, 2026-09-30), so the prompt and the labels of all questions go through as few forward passes as `batch_tokens` allows (one, for every built-in scenario), and every token shared by several labels is computed once. Measured on the RTX 5070 with Qwen2.5-1.5B-Instruct before this change: 28 fields 190 ms (122 ms prefill of 1,125 tokens, 66 ms scoring 616 tokens); 255 options 584 ms (313 ms prefill, 253 ms scoring 2,334 tokens).
 
-1. Prefill (3.6) with the model's decoder (`model.get_decoder()`) and a `DynamicCache`. Keep references to every layer's keys and values.
+1. One forward pass reads the prompt and scores the first trees together (each forward has a fixed cost of about 36 ms on the RTX 5070 with a 1.5B model, so passes are the thing to save): the prompt's P tokens come first in the pass, causal among themselves, then the tree nodes (step 3). Only when the trees do not fit in `batch_tokens` do later passes run, on top of the prompt's keys and values from the first pass (with the model's decoder, `model.get_decoder()`, and a `DynamicCache`).
 2. Per question, build a token tree: the root path is the question's suffix ids, then every label's candidate ids hang below it, sharing nodes where labels share leading tokens (all string options share ` "`; options like `returns.refund` and `returns.exchange` share more). Each tree node is one token, fed once.
-3. Pack whole question trees into passes of at most `batch_tokens` tokens (a larger tree gets a pass of its own). For a pass of M nodes:
-   - `input_ids` of shape `(1, M)`: the nodes, each tree in depth-first order.
-   - `position_ids` of shape `(1, M)`: P + the node's depth in its tree (P = prefix length).
-   - A 4D attention mask of shape `(1, 1, M, P + M)`: a node sees every prefix position, its own ancestors and itself, nothing else.
-   - A fresh batch-1 `DynamicCache` built from the step 1 references, so passes never see each other.
+3. Pack whole question trees into passes of at most `batch_tokens` tree nodes (a larger tree gets a pass of its own). In every pass the M nodes are laid out in depth-first order of each tree, a node's position is P + its depth (P = prompt length), and a node sees every prompt position, its own ancestors and itself, nothing else. The first pass also carries the P prompt tokens in front (positions 0 to P-1, causal); later passes start from a fresh batch-1 `DynamicCache` holding only the prompt's keys and values, so passes never see each other.
 4. Apply the output head (`model.get_output_embeddings()`) only at nodes whose children are candidate tokens; `log_softmax` in float32. A label's score is the sum, along its path, of each candidate token's log-prob given its parent node. The suffix tokens are context, not scored.
 5. Raw score of a label: `s = sum of its candidate-token log-probs` (no length normalization).
 
-Acceptance: the result equals scoring each full sequence without a cache to within 2e-4 in summed log-prob (fp32, on CPU and on the GPU). Measured before the tree: 7.6e-5 with a 280-token prefix on CPU, 4.6e-5 on the RTX 5070 in fp32. In bf16 the uncached path alone is 0.3 to 0.4 off its own fp32 result, so bf16 is only checked for staying within that noise.
+Acceptance: the result equals scoring each full sequence without a cache to within 2e-4 in summed log-prob in fp32 on CPU, and 2e-3 in fp32 on the GPU (on the 2,058-token router prompt every GPU fp32 path, the plain uncached reference included, is 1.2e-3 to 1.3e-3 off an fp64 result on Qwen3-1.7B). Measured after the one-pass change (RTX 5070, bf16, warm, p50): Qwen2.5-1.5B-Instruct 28 fields 100 ms, 255 options 221 ms, 1 to 10 fields 35 ms; Qwen3-4B-Instruct-2507 28 fields 275 ms, 255 options 637 ms. In bf16 a single path is up to about 1.8 off its own fp32 result on small models, so bf16 is only checked for staying within that noise (2.5).
 
 ### 3.5 Probabilities
 
 Per question: `p = softmax(s / T)` over that question's labels, T > 0 (default from section 9, else 1.0). A question with one label (1-option choice, 1-level score) gets p = 1 without running the model for it.
 
-### 3.6 Question-part cache
+### 3.6 No question-part cache
 
-The prompt splits into a part that only depends on the questions (template head, system message, `Questions:` and every block, up to and including `State:` and its line break) and a part that depends on the state (the state, the closing rule, the template tail). The engine keeps the computed keys and values of the question part for recent question sets (keyed by its token ids; bounded so it cannot crowd the model out of a 12 GB card), so a repeated question set only prefills the state part. The split point must be a pre-tokenizer boundary for typical states, so cached and uncached calls feed the same ids; a test checks that the scores are the same with and without a cache hit. The benchmark measures accuracy with this question-first order against the earlier state-first order before release.
+A cache of the question part needs the questions before the state, which costs too much accuracy (3.1). It was built, measured (a repeated 28-field question set: 77 ms instead of 158 ms) and removed on 2026-10-01 in favour of the one-pass design in 3.4.
 
 ## 4. Python API
 
@@ -190,7 +186,7 @@ The console's standard-library server (section 10) also answers the API, so ther
 
 | Route | Behaviour |
 | --- | --- |
-| `POST /v1/systemone` | TypeSafe drop-in: section 2 shapes, numbers rounded to 2 decimals, `id` in header `x-request-id`, latency in `server-timing`. The request's `model` is accepted and ignored; the answer names the loaded model |
+| `POST /v1/systemone` | TypeSafe drop-in: section 2 shapes, numbers rounded to 2 decimals, `id` in headers `x-request-id` and `x-typesafe-request-id` (the official SDK reads the second), latency in `server-timing`. The request's `model` is accepted and ignored; the answer names the loaded model |
 | `POST /v1/decide` | Same request; full precision; body includes `id` and `latency_ms` |
 | `GET /v1/models` | The loaded model and the approved list (section 11) |
 

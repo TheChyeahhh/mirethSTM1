@@ -16,16 +16,19 @@ def _parser():
     commands = parser.add_subparsers(dest="command", required=True)
     decide = commands.add_parser("decide", help="answer a questions map about the state read from stdin")
     decide.add_argument("--schema", required=True, help="JSON file holding a TypeSafe questions map")
-    decide.add_argument("--model", default=DEFAULT_MODEL, help=f"Hugging Face model id (default {DEFAULT_MODEL})")
+    decide.add_argument("--model", default=DEFAULT_MODEL,
+                        help=f"Hugging Face model id (default {DEFAULT_MODEL}); ids off the approved list are unvetted")
     decide.add_argument("--temperature", type=float, help="softmax temperature (default: the model's shipped value, else 1.0)")
     decide.add_argument("--device", help='"cuda" or "cpu" (default: cuda when available)')
-    decide.add_argument("--batch-tokens", type=int, default=2048, help="candidate tokens per scoring pass (default 2048)")
+    decide.add_argument("--batch-tokens", type=int, default=2048,
+                        help="tree nodes per scoring pass; the first pass also reads the prompt (default 2048)")
     decide.add_argument("--log", help="append the JSONL events of this call to this file")
     decide.add_argument("--state-json", action="store_true", help="parse stdin as JSON instead of a plain string")
     decide.add_argument("--no-tarnlight", action="store_true", help="do not feed Tarnlight's drop folder")
-    race = commands.add_parser("console", help="race view in the browser: MirethSTM1 next to normal generation")
+    race = commands.add_parser("console", help="race view in the browser plus the local API (POST /v1/systemone)")
     race.add_argument("--model", default=console.DEFAULT_MODEL,
-                      help=f"Hugging Face model id to load first (default {console.DEFAULT_MODEL})")
+                      help=f"Hugging Face model id to load first (default {console.DEFAULT_MODEL}); "
+                           "the picker offers the approved models")
     race.add_argument("--device", help='"cuda" or "cpu" (default: cuda when available)')
     race.add_argument("--host", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
     race.add_argument("--port", type=int, default=8766, help="port to listen on (default 8766)")

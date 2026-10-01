@@ -1,179 +1,143 @@
-"""Benchmark stub: score a labelled dataset with the engine, report accuracy and ECE.
+"""Accuracy and calibration runs: every dataset through every arm, one JSON line per sample.
 
-    python bench/run_bench.py --dataset ag_news --n 200 --fit
+    python -m bench.run_bench --model Qwen/Qwen2.5-1.5B-Instruct --n 200 --n-cal 200 --out dry-run
 
-Writes one JSON line per sample (dataset, index, gold, raw label scores) under
-bench/out/, so tables can be rebuilt without rerunning the model.
-Design: docs/research/07-benchmark-design.md.
+Writes bench/out/<run>/<model>/<dataset>.<split>.<arm>.jsonl, split "eval" (scored) or
+"cal" (the disjoint calibration split, scoring arms only, for fitting T), plus the sample
+lists and hardware in bench/out/<run>/meta.json. Each line holds the dataset, row index,
+gold label, arm, the raw label scores (or the generated answer) and latency_ms, so every
+table rebuilds without the model: python -m bench.report --run <run>.
+
+A file that exists is complete (written whole, then renamed), so a rerun with the same
+--out skips it and an interrupted run resumes where it stopped.
 """
 
 import argparse
-import json
-from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
-from datasets import load_dataset
 
-from mirethstm import Engine
-from mirethstm.calibration import ece, fit_temperature
+from . import arms, data
+from .common import OUT, add_model_args, hardware, load_engine, models, on_cuda, read_json, release, slug, \
+    timed, write_json, write_jsonl
 
-OUT_DIR = Path(__file__).resolve().parent / "out"
-SEED = 0
-QID = "answer"
-
-# Evaluation split, text field, label names in dataset index order (None: derived
-# at runtime) and the TypeSafe question type each dataset becomes.
-DATASETS = {
-    "ag_news": {
-        "hf_id": "fancyzhx/ag_news",
-        "split": "test",
-        "text": "text",
-        "label_names": ["World", "Sports", "Business", "Sci/Tech"],
-        "type": "choice",
-        "instructions": "Which topic is this news article about?",
-    },
-    "banking77": {
-        "hf_id": "mteb/banking77",
-        "split": "test",
-        "text": "text",
-        "label_names": None,  # no ClassLabel; see banking77_names()
-        "type": "choice",
-        "instructions": "Which intent does this banking customer message express?",
-    },
-    "sst2": {
-        "hf_id": "stanfordnlp/sst2",
-        "split": "validation",  # test labels are hidden (all -1)
-        "text": "sentence",
-        "label_names": ["negative", "positive"],
-        "type": "noul",
-        "instructions": "Is the sentiment of this text positive?",
-    },
-    "yelp": {
-        "hf_id": "Yelp/yelp_review_full",
-        "split": "test",
-        "text": "text",
-        "label_names": ["1 star", "2 star", "3 stars", "4 stars", "5 stars"],
-        "type": "score",
-        "instructions": "How many stars does this review give?",
-    },
-}
+DEFAULT_ARMS = ("mireth", "baseline", "first_token")
 
 
-def banking77_names(hf_id):
-    """Intent names in label order, read from the train split's label_text column."""
-    train = load_dataset(hf_id, split="train")
-    pairs = sorted(set(zip(train["label"], train["label_text"])))
-    if [label for label, _ in pairs] != list(range(len(pairs))):
-        raise ValueError(f"{hf_id}: label ids and label_text do not map one to one")
-    # Two raw names are irregular: "Refund_not_showing_up" and "reverted_card_payment?".
-    return [name.lower().rstrip("?") for _, name in pairs]
+class Task(NamedTuple):
+    index: int
+    state: object
+    questions: dict  # one question
+    gold: str  # engine label
+    extra: dict = {}  # more keys for the record (JevBench: item id, family)
 
 
-def build_question(spec, names):
-    """The TypeSafe question for a dataset, and the engine label for each gold index."""
-    kind, instructions = spec["type"], spec["instructions"]
-    if kind == "choice":
-        return {"type": kind, "instructions": instructions, "criteria": dict.fromkeys(names)}, list(names)
-    if kind == "noul":
-        # Binary datasets: gold label 1 is the "true" answer.
-        criteria = {"true": names[1], "false": names[0]}
-        return {"type": kind, "instructions": instructions, "criteria": criteria}, ["false", "true"]
-    return {"type": kind, "instructions": instructions, "criteria": list(names)}, [str(i) for i in range(len(names))]
+def dataset_tasks(question, labels, rows):
+    return [Task(s.index, s.text, {data.QID: question}, labels[s.gold]) for s in rows]
 
 
-def softmax(z, t=1.0):
-    s = z / t
-    e = np.exp(s - s.max(axis=1, keepdims=True))
-    return e / e.sum(axis=1, keepdims=True)
+def run_tasks(engine, arm, tasks, base):
+    """Run one arm over tasks (one untimed warmup call first); returns the records."""
+    fn = arms.ARMS[arm]
+    cuda = on_cuda(engine)
+    fn(engine, tasks[0].state, tasks[0].questions)
+    records = []
+    for t in tasks:
+        result, ms = timed(lambda: fn(engine, t.state, t.questions), cuda)
+        (r,) = result.values()
+        records.append({**base, "index": t.index, **t.extra, "gold": t.gold, "arm": arm, **r, "latency_ms": ms})
+    return records
 
 
-def report(logits, gold, fit):
-    """Print n, accuracy and ECE at T = 1; with fit, the fitted T and ECE after."""
-    p = softmax(logits)
-    correct = p.argmax(axis=1) == gold  # argmax, so accuracy does not depend on T
-
-    def ece_line(p):
-        conf = p.max(axis=1)
-        return f"{ece(conf, correct):.4f} (15 bins), {ece(conf, correct, n_bins=10):.4f} (10 bins, as Kev)"
-
-    print(f"n            {len(gold)}")
-    print(f"accuracy     {correct.mean():.4f}")
-    print(f"ECE at T=1   {ece_line(p)}")
-    if not fit:
-        return
-    try:
-        t = fit_temperature(logits, gold)
-    except ValueError as err:
-        print(f"fit failed   {err}")
-        return
-    print(f"fitted T     {t:.4f}")
-    print(f"ECE after    {ece_line(softmax(logits, t))}")
-    print(f"note         T was fitted and evaluated on the same {len(gold)} samples, so ECE after is optimistic")
+def summary(records):
+    """One progress line: accuracy (and validity for generation) and mean latency."""
+    if "scores" in records[0]:
+        hits = [max(r["scores"], key=r["scores"].get) == r["gold"] for r in records]
+        extra = ""
+    elif "probs" in records[0]:
+        hits = [max(r["probs"], key=r["probs"].get) == r["gold"] for r in records]
+        extra = ""
+    else:
+        hits = [r["pred"] == r["gold"] for r in records]
+        extra = f", valid {np.mean([r['pred'] is not None for r in records]):.3f}"
+    return f"n {len(records)}, accuracy {np.mean(hits):.3f}{extra}, mean {np.mean([r['latency_ms'] for r in records]):.0f} ms"
 
 
-# TODO functions, planned in docs/research/07-benchmark-design.md.
-
-def generate_baseline(engine, text, schema):
-    raise NotImplementedError("TODO: same model writes the JSON answer with greedy generate(); "
-                              "schema-checked, invalid output counts as wrong")
-
-
-def latency(engine, field_counts=(1, 5, 10, 20)):
-    raise NotImplementedError("TODO: p50/p95 over 200 timed runs after 10 warmups per field count, "
-                              "batch 1, CUDA synchronized at both ends")
-
-
-def macro_f1(pred, gold, n_labels):
-    raise NotImplementedError("TODO: mean of per-class F1, invalid baseline answers as an extra class")
+def run_files(engine, model, jobs, run_dir):
+    """jobs: (file stem, arm, tasks, base record keys). Skips files that already exist."""
+    for stem, arm, tasks, base in jobs:
+        path = run_dir / slug(model) / f"{stem}.{arm}.jsonl"
+        if path.exists():
+            print(f"skip   {path.relative_to(run_dir)} (exists)", flush=True)
+            continue
+        records = run_tasks(engine, arm, tasks, {"model": model, **base})
+        write_jsonl(path, records)
+        print(f"wrote  {path.relative_to(run_dir)}: {summary(records)}", flush=True)
 
 
-def nll(probs, gold):
-    raise NotImplementedError("TODO: mean of -log p(gold), p clipped at 1e-12")
+def missing(model, jobs, run_dir):
+    return [job for job in jobs if not (run_dir / slug(model) / f"{job[0]}.{job[1]}.jsonl").exists()]
 
 
-def brier(probs, gold):
-    raise NotImplementedError("TODO: mean over rows of the squared error summed over all classes")
+def append_meta(run_dir, key, entry):
+    path = run_dir / "meta.json"
+    meta = read_json(path) if path.exists() else {}
+    meta.setdefault(key, []).append(entry)
+    write_json(path, meta)
 
 
-def bootstrap_ci(values, statistic, n_resamples=1000):
-    raise NotImplementedError("TODO: 95% interval of a metric over 1000 resamples of the evaluation rows")
-
-
-def reliability_diagram(confidences, correct, path):
-    raise NotImplementedError("TODO: 15-bin accuracy against confidence, before and after T, saved as PNG")
+def split_list(text, allowed, what):
+    items = [x for x in text.split(",") if x]
+    unknown = sorted(set(items) - set(allowed))
+    if unknown or not items:
+        raise SystemExit(f"unknown {what}: {', '.join(unknown) or '(none given)'}; choose from {', '.join(allowed)}")
+    return items
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--model", default="Qwen/Qwen3-4B-Instruct-2507", help="model id (default: %(default)s)")
-    parser.add_argument("--dataset", required=True, choices=sorted(DATASETS))
-    parser.add_argument("--n", type=int, default=200, help="samples, drawn at random with a fixed seed")
-    parser.add_argument("--device", default=None, help="cuda or cpu (default: cuda if available)")
-    parser.add_argument("--out", default=None, help="JSONL path (default: bench/out/<dataset>-<model>.jsonl)")
-    parser.add_argument("--fit", action="store_true", help="also fit T on these samples and report ECE after")
+    add_model_args(parser)
+    parser.add_argument("--datasets", default=",".join(data.DATASETS), help="comma list (default: all)")
+    parser.add_argument("--arms", default=",".join(DEFAULT_ARMS),
+                        help=f"comma list of {', '.join(arms.ARMS)} (default: %(default)s)")
+    parser.add_argument("--n", type=int, default=200, help="evaluation samples per dataset (default: %(default)s)")
+    parser.add_argument("--n-cal", type=int, default=200,
+                        help="calibration samples per dataset, scoring arms only (default: %(default)s)")
+    parser.add_argument("--seed", type=int, default=data.SEED)
     args = parser.parse_args(argv)
+    names = split_list(args.datasets, data.DATASETS, "dataset")
+    chosen = split_list(args.arms, arms.ARMS, "arm")
+    run_dir = OUT / args.out
 
-    spec = DATASETS[args.dataset]
-    names = spec["label_names"] or banking77_names(spec["hf_id"])
-    question, labels = build_question(spec, names)
-    schema = {QID: question}
-    data = load_dataset(spec["hf_id"], split=spec["split"])
-    rows = np.random.default_rng(SEED).permutation(len(data))[: args.n]
+    # Datasets first, so a missing download fails before any model loads.
+    jobs, lists = [], {}
+    for name in names:
+        question, labels = data.question(name)
+        n_cal = args.n_cal if any(a in arms.SCORING for a in chosen) else 0
+        ev, cal = data.samples(name, args.n, n_cal, args.seed)
+        lists[name] = {"hf_id": data.DATASETS[name].hf_id, "question": question, "labels": labels,
+                       "eval": [s.index for s in ev], "cal": [s.index for s in cal]}
+        for split, rows in (("cal", cal), ("eval", ev)):
+            for arm in chosen:
+                if rows and (split == "eval" or arm in arms.SCORING):
+                    jobs.append((f"{name}.{split}", arm, dataset_tasks(question, labels, rows),
+                                 {"dataset": name, "split": split}))
+    append_meta(run_dir, "run_bench", {"args": vars(args), "models": models(args), "hardware": hardware(),
+                                       "datasets": lists})
 
-    engine = Engine.load(args.model, device=args.device)
-    out = Path(args.out) if args.out else OUT_DIR / f"{args.dataset}-{Path(args.model).name}.jsonl"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    logits, gold = [], []
-    with out.open("w", encoding="utf-8") as f:
-        for i in rows:
-            row = data[int(i)]
-            scores = engine.score(row[spec["text"]], schema)[QID]
-            record = {"dataset": args.dataset, "index": int(i), "gold": labels[row["label"]], "scores": scores}
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            logits.append([scores[label] for label in labels])
-            gold.append(row["label"])
-    print(f"wrote        {out}")
-    report(np.array(logits), np.array(gold), args.fit)
+    for model in models(args):
+        todo = missing(model, jobs, run_dir)
+        if not todo:
+            print(f"model  {model}: every file exists", flush=True)
+            continue
+        print(f"model  {model}: loading", flush=True)
+        engine = load_engine(model, args)
+        append_meta(run_dir, "loaded", {"script": "run_bench", "model": model, "dtype": str(engine.model.dtype),
+                                        "device": str(engine.model.device)})
+        run_files(engine, model, todo, run_dir)
+        del engine
+        release()
+    print(f"done   tables: python -m bench.report --run {args.out}")
 
 
 if __name__ == "__main__":

@@ -16,8 +16,8 @@ Pre-release. The engine, the `decide` command, the console and the calibration c
 
 ## How it works
 
-1. Prefill the text and all questions once into a KV cache.
-2. Score every allowed answer of every question as a whole label (the summed log-probs of all its tokens), all in one packed pass on top of the cached prefix.
+1. One forward pass reads the text and all questions and, in the same pass, scores every allowed answer of every question as a whole label (the summed log-probs of all its tokens).
+2. Answers that share leading tokens share them in a token tree, so each shared token is computed once.
 3. Turn each question's label scores into probabilities with a softmax.
 4. Divide the scores by a temperature T before the softmax; T is fitted on held-out labels (1.0 until the benchmark sets it).
 

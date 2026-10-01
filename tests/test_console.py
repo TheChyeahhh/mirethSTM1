@@ -9,6 +9,7 @@ import time
 import pytest
 
 from mirethstm import baseline, console
+from mirethstm.models import approved, entry
 from mirethstm.scenarios import SCENARIOS
 from mirethstm.schema import validate
 
@@ -157,7 +158,7 @@ def test_scenarios_endpoint(server):
 
 def test_models_and_switch(server):
     assert json.loads(request(server, "GET", "/api/models")[2]) == {
-        "models": ["stub/a", "stub/b", "broken/model"], "current": "stub/a"}
+        "models": [entry("stub/a"), entry("stub/b"), entry("broken/model")], "current": "stub/a"}
     status, _, body = request(server, "POST", "/api/model", {"model": "stub/b"})
     assert (status, json.loads(body)) == (200, {"current": "stub/b"})
     assert server.engine.model_id == "stub/b"
@@ -171,10 +172,22 @@ def test_models_and_switch(server):
     assert error["current"] == "stub/b" and server.engine.model_id == "stub/b"  # the previous model is back
 
 
-def test_default_model_list():
-    assert console.MODELS[0] == console.DEFAULT_MODEL == "Qwen/Qwen2.5-1.5B-Instruct"
-    assert set(console.MODELS) == {"Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen3-1.7B",
-                                   "Qwen/Qwen3-4B-Instruct-2507", "Qwen/Qwen3-0.6B"}
+def test_picker_offers_the_approved_models():
+    ids = [m.id for m in approved()]
+    assert ids == ["Qwen/Qwen2.5-1.5B-Instruct", "Qwen/Qwen3-1.7B", "Qwen/Qwen3-4B-Instruct-2507",
+                   "Qwen/Qwen3-0.6B"]  # SPEC 10.1 order, the console default first
+    assert console.DEFAULT_MODEL == ids[0]
+    assert console.picker(console.DEFAULT_MODEL) == console.picker("Qwen/Qwen3-0.6B") == ids
+    assert console.picker("some/other-model") == ids + ["some/other-model"]  # --model takes any id
+
+
+def test_picker_entries_carry_a_note():
+    first = entry("Qwen/Qwen2.5-1.5B-Instruct")
+    assert (first["name"], first["title"], first["description"]) == (
+        "Qwen/Qwen2.5-1.5B-Instruct", "Qwen2.5 1.5B Instruct", "Match first, not approved yet")
+    unvetted = entry("some/other-model")
+    assert unvetted["name"] == unvetted["title"] == "some/other-model"
+    assert unvetted["status"] == "unvetted" and "approved list" in unvetted["description"]
 
 
 # --- runs ----------------------------------------------------------------------------------

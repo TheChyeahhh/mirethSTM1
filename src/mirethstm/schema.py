@@ -42,7 +42,7 @@ def validate(state, questions):
         kind = q.get("type")
         if kind not in TYPES:
             raise SchemaError(f"{where}: unknown type {kind!r} (expected noul, choice or score)")
-        if not _is_text(q.get("instructions")):
+        if q.get("instructions") is not None and not _is_text(q["instructions"]):  # optional; null is absent
             raise SchemaError(f"{where}: instructions must be a string, an object or an array")
         criteria = q.get("criteria")
         if kind == "noul":
@@ -80,18 +80,19 @@ def text(value):
 
 def _block(k, q):
     kind, criteria = q["type"], q.get("criteria")
+    ask = "" if q.get("instructions") is None else " " + text(q["instructions"])  # without it: "q1 (yes/no):"
     if kind == "noul":
-        lines = [f"q{k} (yes/no): {text(q['instructions'])}"]
+        lines = [f"q{k} (yes/no):{ask}"]
         for key in ("true", "false"):
             if (criteria or {}).get(key) is not None:
                 lines.append(f"  {key}: {text(criteria[key])}")
     elif kind == "choice":
-        lines = [f"q{k} (choice): {text(q['instructions'])}", "  Options:"]
+        lines = [f"q{k} (choice):{ask}", "  Options:"]
         for name, desc in criteria.items():
             option = json.dumps(name, ensure_ascii=False)
             lines.append(f"  - {option}" if desc is None else f"  - {option}: {text(desc)}")
     else:
-        lines = [f"q{k} (score, 0 to {len(criteria) - 1}): {text(q['instructions'])}"]
+        lines = [f"q{k} (score, 0 to {len(criteria) - 1}):{ask}"]
         lines += [f"  {i}: {text(level)}" for i, level in enumerate(criteria)]
     return "\n".join(lines)
 

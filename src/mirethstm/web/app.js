@@ -306,11 +306,13 @@ async function switchModel() {
   }
 }
 
+// entries: [value, label] or [value, label, hover title].
 function fill(select, entries) {
-  select.replaceChildren(...entries.map(([value, label]) => {
+  select.replaceChildren(...entries.map(([value, label, title]) => {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = label;
+    if (title) option.title = title;
     return option;
   }));
 }
@@ -348,7 +350,8 @@ async function init() {
     const [list, models] = await Promise.all([getJSON("/api/scenarios"), getJSON("/api/models")]);
     scenarios = list;
     fill(ui.scenario, scenarios.map((s) => [s.id, s.title]));
-    fill(ui.model, models.models.map((m) => [m, m]));
+    // The approved list: display name and a short note (role, then speed and accuracy once measured).
+    fill(ui.model, models.models.map((m) => [m.name, `${m.title} (${m.description})`, m.name]));
     currentModel = models.current;
     if (currentModel) ui.model.value = currentModel;
     ui.state.value = scenarios.length ? scenarios[0].state : "";

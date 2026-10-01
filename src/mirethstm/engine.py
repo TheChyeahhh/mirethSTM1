@@ -1,10 +1,12 @@
-"""The decision engine: cached full-label scoring on a local causal LM (SPEC 2.2, 3, 4)."""
+"""The decision engine: full-label tree scoring on a local causal LM, one forward reading the prompt
+and the trees together (SPEC 2.2, 3, 4)."""
 
 import functools
 import math
 import re
 import time
 import uuid
+from typing import NamedTuple
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
@@ -36,7 +38,7 @@ def encode(tokenizer, text):
 
 
 def prefix_ids(tokenizer, state, questions, rules=sch.ANSWER_RULES, system=sch.SYSTEM_PROMPT):
-    """The chat-templated prompt (system + user + generation prompt) that is prefilled once.
+    """The chat-templated prompt (system + user + generation prompt) that is read once.
 
     Only the template's own text yields control tokens; the user message is encoded as plain text.
     `system` and `rules` (the closing of the user message) differ for the baseline, which asks
@@ -81,18 +83,63 @@ def check_supported(lm, model_id):
         raise ValueError(f"{model_id} is not supported: its forward changes the logits after the output head")
 
 
-def _passes(seqs, batch_tokens):
-    """Consecutive (suffix_ids, candidate_ids) pairs grouped into passes of at most batch_tokens tokens.
+class _Tree(NamedTuple):
+    """One question's token tree, nodes in depth-first order (SPEC 3.4)."""
 
-    A pair longer than the budget gets a pass of its own.
+    tokens: list  # token id of each node
+    depths: list  # depth of each node; the first suffix token is depth 0
+    ends: list    # one past the last node of each node's subtree
+    paths: list   # per label: its (parent node, candidate token) pairs, whose log-probs sum to its score
+
+
+def _tree(suffix_ids, candidate_ids):
+    """The suffix as a chain, then every candidate below its last node, sharing the nodes of
+    leading tokens that candidates have in common."""
+    trie = {}
+    for cand in candidate_ids:
+        node = trie
+        for t in cand:
+            node = node.setdefault(t, {})
+    n = len(suffix_ids)
+    tokens, depths, parents = list(suffix_ids), list(range(n)), list(range(-1, n - 1))
+    index, stack = {}, [(n - 1, iter(trie.items()))]
+    while stack:  # depth-first without recursion: a label can be hundreds of tokens long
+        parent, children = stack[-1]
+        child = next(children, None)
+        if child is None:
+            stack.pop()
+            continue
+        token, below = child
+        index[parent, token] = len(tokens)
+        stack.append((len(tokens), iter(below.items())))
+        tokens.append(token)
+        depths.append(depths[parent] + 1)
+        parents.append(parent)
+    ends = list(range(1, len(tokens) + 1))
+    for i in range(len(tokens) - 1, 0, -1):  # a subtree ends where its last descendant does
+        ends[parents[i]] = max(ends[parents[i]], ends[i])
+    paths = []
+    for cand in candidate_ids:
+        parent, path = n - 1, []
+        for t in cand:
+            path.append((parent, t))
+            parent = index[parent, t]
+        paths.append(path)
+    return _Tree(tokens, depths, ends, paths)
+
+
+def _passes(trees, batch_tokens):
+    """Consecutive trees grouped into passes of at most batch_tokens nodes.
+
+    A tree larger than the budget gets a pass of its own.
     """
     batch, size = [], 0
-    for s, c in seqs:
-        if batch and size + len(s) + len(c) > batch_tokens:
+    for tree in trees:
+        if batch and size + len(tree.tokens) > batch_tokens:
             yield batch
             batch, size = [], 0
-        batch.append((s, c))
-        size += len(s) + len(c)
+        batch.append(tree)
+        size += len(tree.tokens)
     if batch:
         yield batch
 
@@ -129,7 +176,7 @@ def _answer(q, probs):
 
 
 class Engine:
-    """Scores every allowed answer of every question against one prefilled KV cache."""
+    """Scores every allowed answer of every question; the prompt is read once, in the first forward."""
 
     def __init__(self, model, tokenizer, model_id, batch_tokens=2048, temperature=1.0, event_log=None,
                  tarnlight=True):
@@ -148,8 +195,8 @@ class Engine:
     def load(cls, model, device=None, dtype=None, batch_tokens=2048, temperature=None, event_log=None,
              tarnlight=True):
         """Load a Hugging Face causal LM and its tokenizer."""
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device is None:  # is_available() can be True with no visible device (CUDA_VISIBLE_DEVICES="")
+            device = "cuda" if torch.cuda.device_count() else "cpu"
         if dtype is None:
             dtype = torch.bfloat16 if str(device).startswith("cuda") else torch.float32
         if temperature is None:
@@ -192,67 +239,87 @@ class Engine:
         return result
 
     def _run(self, context, schema):
-        """Validate, then score every label; returns (scores, input token count)."""
+        """Validate, then score every label; returns (scores, input token count).
+
+        The count follows SPEC 2.2: the prompt, plus each label's suffix and candidate as if fed on
+        their own (tree nodes that labels share are fed once, but counted for every label).
+        """
         sch.validate(context, schema)
         scores = {qid: {} for qid in schema}
-        pairs, seqs = [], []
+        owners, trees, label_tokens = [], [], 0
         for k, (qid, q) in enumerate(schema.items(), 1):
             labels = sch.labels(q)
             if len(labels) == 1:
                 scores[qid][labels[0]] = 0.0
                 continue
             suffix_ids = self._label_ids(sch.suffix(k))
-            for label, cand in zip(labels, sch.candidates(q)):
-                pairs.append((qid, label))
-                seqs.append((suffix_ids, self._label_ids(cand)))
-        if not seqs:
+            cands = [self._label_ids(cand) for cand in sch.candidates(q)]
+            owners.append((qid, labels))
+            trees.append(_tree(suffix_ids, cands))
+            label_tokens += sum(len(suffix_ids) + len(c) for c in cands)
+        if not trees:
             return scores, 0
-        prefix = prefix_ids(self.tokenizer, context, schema)
-        for (qid, label), s in zip(pairs, self._score_ids(prefix, seqs)):
-            scores[qid][label] = s
-        input_tokens = len(prefix) + sum(len(s) + len(c) for s, c in seqs)
-        return scores, input_tokens
+        prompt = prefix_ids(self.tokenizer, context, schema)
+        for (qid, labels), label_scores in zip(owners, self._score_trees(prompt, trees)):
+            scores[qid] = dict(zip(labels, label_scores))
+        return scores, len(prompt) + label_tokens
 
     @torch.inference_mode()
-    def _score_ids(self, prefix_ids, seqs):
-        """Sum of candidate-token log-probs for each (suffix_ids, candidate_ids): one prefill, then
-        every sequence packed into as few passes as batch_tokens allows (SPEC 3.4)."""
-        decoder, device = self.model.get_decoder(), self.model.device
-        cache = DynamicCache(config=self.model.config)
-        decoder(input_ids=torch.tensor([prefix_ids], device=device), past_key_values=cache, use_cache=True)
-        # References, not copies: a later forward rebinds each layer's tensors and never writes into these.
-        prefix_kv = [(layer.keys, layer.values) for layer in cache.layers]
-        out = []
-        for batch in _passes(seqs, self.batch_tokens):
-            out += self._score_pass(decoder, prefix_kv, len(prefix_ids), batch)
+    def _score_trees(self, prompt, trees):
+        """Label scores of every tree, in order (SPEC 3.4): the trees packed into as few passes as
+        batch_tokens allows, the first pass reading the prompt in the same forward. Later passes,
+        if any, each start from a fresh cache holding only the prompt's keys and values."""
+        decoder, plen = self.model.get_decoder(), len(prompt)
+        first, *rest = _passes(trees, self.batch_tokens)
+        cache = DynamicCache(config=self.model.config) if rest else None
+        out = self._score_pass(decoder, prompt, plen, first, cache)
+        if rest:
+            # Views of the prompt's keys and values; each later forward copies them into its own
+            # cache (torch.cat), so no pass ever sees another pass's nodes.
+            prompt_kv = [(layer.keys[:, :, :plen], layer.values[:, :, :plen]) for layer in cache.layers]
+        for batch in rest:
+            out += self._score_pass(decoder, [], plen, batch, DynamicCache(ddp_cache_data=prompt_kv))
         return out
 
-    def _score_pass(self, decoder, prefix_kv, plen, batch):
-        """One forward over the sequences of `batch` laid end to end after the prefix.
+    def _score_pass(self, decoder, prompt, plen, batch, cache):
+        """One forward over `prompt` (the whole prompt in the first pass, else empty: its keys and
+        values are then in `cache`) followed by the trees of `batch`; their label scores.
 
-        Each sequence restarts at position plen and sees the prefix and its own earlier tokens only.
+        Prompt tokens sit at positions 0 .. plen - 1, causal among themselves. A tree node sits at
+        plen + its depth and sees the prompt, its ancestors and itself. The output head runs only
+        at nodes whose children are candidate tokens.
         """
-        device = self.model.device
-        ids, positions, owner, rows, targets, counts = [], [], [], [], [], []
-        for i, (s, c) in enumerate(batch):
-            start = len(ids)
-            ids += s + c
-            positions += range(plen, plen + len(s) + len(c))
-            owner += [i] * (len(s) + len(c))
-            # Position j predicts token j + 1, so candidate token t is read at start + len(s) - 1 + t.
-            rows += range(start + len(s) - 1, start + len(s) - 1 + len(c))
-            targets += c
-            counts.append(len(c))
-        owner = torch.tensor(owner, device=device)
-        order = torch.arange(len(ids), device=device)
-        own = (owner[:, None] == owner[None, :]) & (order[None, :] <= order[:, None])
-        # Bool 4D mask, True = attend: transformers hands a 4D mask to SDPA unchanged.
-        mask = torch.cat([own.new_ones((len(ids), plen)), own], dim=1)[None, None]
+        device, f = self.model.device, len(prompt)
+        ids, positions, ends, heads, rows, targets = list(prompt), list(range(f)), [], {}, [], []
+        for tree in batch:
+            base = len(ends)  # nodes laid out so far
+            ids += tree.tokens
+            positions += [plen + d for d in tree.depths]
+            ends += [base + e for e in tree.ends]
+            for path in tree.paths:
+                for parent, token in path:
+                    rows.append(heads.setdefault(f + base + parent, len(heads)))
+                    targets.append(token)
+        order = torch.arange(len(ends), device=device)
+        end = torch.tensor(ends, device=device)
+        # Depth-first order: node j's subtree is j .. end[j] - 1, so node i sees j when j <= i < end[j].
+        own = (order[None, :] <= order[:, None]) & (order[:, None] < end[None, :])
+        # Bool 4D mask, True = attend. transformers hands a 4D mask to SDPA unchanged, so it spans every
+        # key of the forward: the plen prompt keys (from the cache or from this forward), then the nodes.
+        mask = torch.cat([own.new_ones((len(ends), plen)), own], dim=1)
+        if f:  # the prompt's own rows: causal, blind to the nodes
+            mask = torch.cat([torch.cat([own.new_ones((f, f)).tril(), own.new_zeros((f, len(ends)))], dim=1), mask])
         hidden = decoder(input_ids=torch.tensor([ids], device=device),
                          position_ids=torch.tensor([positions], device=device),
-                         attention_mask=mask, past_key_values=DynamicCache(ddp_cache_data=prefix_kv),
-                         use_cache=True).last_hidden_state[0]
+                         attention_mask=mask[None, None], past_key_values=cache,
+                         use_cache=cache is not None).last_hidden_state[0]
         head = self.model.get_output_embeddings()
-        logp = head(hidden[torch.tensor(rows, device=device)]).float().log_softmax(-1)
-        token_lp = logp[torch.arange(len(targets), device=device), torch.tensor(targets, device=device)]
-        return torch.stack([part.sum() for part in token_lp.split(counts)]).tolist()
+        logp = head(hidden[torch.tensor(list(heads), device=device)]).float().log_softmax(-1)
+        token_lp = logp[torch.tensor(rows, device=device), torch.tensor(targets, device=device)].tolist()
+        out, i = [], 0
+        for tree in batch:
+            out.append([])
+            for path in tree.paths:
+                out[-1].append(sum(token_lp[i:i + len(path)]))
+                i += len(path)
+        return out
