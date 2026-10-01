@@ -129,7 +129,7 @@ The closing `}` (and the closing quote for choice) terminates the label, so a la
 
 ### 3.4 Packed single-pass scoring
 
-Speed matters most (founder, 2026-09-30), so all labels of all questions are scored in one forward pass after the prefill, with no copies of the prefix cache. (Day 1 copied the cache once per label in chunks of 8; a 255-option question needed 32 passes.)
+Speed matters most (founder, 2026-09-30), so all labels of all questions are scored in one forward pass after the prefill, with one batch-1 copy of the prefix cache per pass instead of one per label. (Day 1 copied the cache once per label in chunks of 8; a 255-option question needed 32 passes. On CPU the packed pass is 3.7x faster for 28 fields and 4.9x for a 255-option question.)
 
 1. Prefill once with the model's decoder (`model.get_decoder()`) and a `DynamicCache`. Keep references to every layer's keys and values (no copy).
 2. Flatten all (question, label) pairs across all questions. Each sequence = suffix ids + candidate ids.
@@ -250,7 +250,8 @@ Look and feel follows the original demo by Harsha Gundala (parallel vs normal in
 
 `mirethstm.baseline.generate(engine, context, schema, on_text=None) -> dict`, shared by the console and the benchmark:
 
-- Same model, same system prompt and question blocks (SPEC 3.1), but the closing rule asks for ONE JSON object holding every key `q1`..`qn` in order. Rendered with `prefix_ids(tokenizer, state, questions, rules=BASELINE_RULES)`, so caller text is encoded safely (3.3).
+- Same model and question blocks (SPEC 3.1), with its own system prompt and closing rule asking for ONE JSON object holding every key `q1`..`qn` in order (the scorer's "one question per reply" wording would contradict that and handicap the baseline). Rendered with `prefix_ids(tokenizer, state, questions, rules=BASELINE_RULES, system=BASELINE_SYSTEM)`, so caller text is encoded safely (3.3).
+- The right card shows the caller's field ids as keys, with the model's own key (`q1`..`qn`) in a faint gutter, so the two cards read across line by line.
 - Greedy decoding, stop at end of turn, `max_new_tokens` bounded from the questions (enough for the longest label of each question plus JSON syntax).
 - `on_text(chunk)` is called as text is generated (streaming).
 - Returns `text` (the raw output), `answers` (question id to the parsed value or `None`), `valid_json` (bool), `hallucinated` (ids whose value is not an allowed answer: noul not a bool, choice not an exact option name, score not an integer level in range), `missing` (ids absent from the output), `latency_ms`, `output_tokens`.
@@ -264,7 +265,7 @@ Feeds Tarnlight (the founder's public live console, `docs/research/08-console-in
 
 ## 11. Models and environment
 
-Any Hugging Face causal LM with a chat template plugs in: `Engine.load("<hub id or local path>")`, `--model`, or the console's model picker. The engine uses only `get_decoder()`, `get_output_embeddings()` and the tokenizer's chat template. Tested families: Qwen2.5 and Qwen3.
+Any Hugging Face causal LM with a chat template plugs in: `Engine.load("<hub id or local path>")`, `--model`, or the console's model picker. The engine uses only `get_decoder()`, `get_output_embeddings()` and the tokenizer's chat template. Tested families: Qwen2.5 and Qwen3 (full model test suite passes on Qwen3-0.6B and Qwen2.5-1.5B-Instruct). `Engine.load` refuses, with a clear error, a model it would score wrongly: one with sliding-window or other non-full attention layers, or one whose forward changes the logits after the output head (softcapping, scaling).
 
 | Role | Model | License | Notes |
 | --- | --- | --- | --- |

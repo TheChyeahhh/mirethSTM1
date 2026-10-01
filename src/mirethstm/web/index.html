@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MirethSTM1 race view</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+  <header class="bar">
+    <select id="scenario" aria-label="Scenario"></select>
+    <select id="model" aria-label="Model"></select>
+    <button id="run" type="button" disabled><svg class="bolt" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.6 1 3 9.2h4.4L6.4 15 13 6.8H8.6z"/></svg><span id="run-label">Run comparison</span></button>
+  </header>
+
+  <textarea id="state" class="state" rows="2" spellcheck="false" aria-label="State text (editable)"></textarea>
+
+  <div id="notice-row" class="notice-row" hidden><div id="notice" class="notice"></div></div>
+
+  <main class="race">
+    <section class="card" aria-labelledby="ours-title">
+      <div class="card-head">
+        <h2 id="ours-title">MirethSTM1</h2>
+        <span id="ours-ms" class="ms ms-ours">0.0 ms</span>
+      </div>
+      <div id="ours-out" class="out"></div>
+    </section>
+    <section class="card" aria-labelledby="gen-title">
+      <div class="card-head">
+        <div class="head-left">
+          <h2 id="gen-title">Normal generation</h2>
+          <span id="gen-flags" class="flags"></span>
+        </div>
+        <span id="gen-ms" class="ms">0.0 ms</span>
+      </div>
+      <div id="gen-out" class="out"></div>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

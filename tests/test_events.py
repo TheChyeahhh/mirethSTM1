@@ -46,21 +46,8 @@ def test_lines_keys_and_append(tmp_path):
 
 def test_one_write_per_call(tmp_path, monkeypatch):
     writes = []
-
-    class Recorder:
-        def __init__(self, path, mode):
-            assert mode == "ab"
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-        def write(self, data):
-            writes.append(data)
-
-    monkeypatch.setattr("mirethstm.events.open", Recorder, raising=False)
+    # The shared append-only writer (also used by the Tarnlight tap), one call per decide.
+    monkeypatch.setattr("mirethstm.events.append_line", lambda path, data: writes.append(data))
     probs = {f"f{i}": {"a": 0.9, "b": 0.1} for i in range(5)}
     write_events(tmp_path / "x.jsonl", CALL_ID, probs, 1.0, 1.0, "m")
     assert len(writes) == 1 and writes[0].count(b"\n") == 5
@@ -69,7 +56,7 @@ def test_one_write_per_call(tmp_path, monkeypatch):
 @pytest.mark.model
 def test_decide_writes_events(engine, tmp_path):
     path = tmp_path / "events.jsonl"
-    logged = Engine(engine.model, engine.tokenizer, engine.model_id, chunk_size=3,
+    logged = Engine(engine.model, engine.tokenizer, engine.model_id, batch_tokens=16,
                     temperature=1.3, event_log=str(path))
     schema = {
         "is_sport": {"type": "noul", "instructions": "Is this text about sport?"},

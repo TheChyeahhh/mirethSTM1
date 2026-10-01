@@ -3,6 +3,8 @@
 import json
 from datetime import datetime, timezone
 
+from .tarnlight import append_line
+
 
 def write_events(path, call_id, probs_by_field, temperature, latency_ms, model):
     """Append one line per question of one decide call, all in a single write.
@@ -25,6 +27,5 @@ def write_events(path, call_id, probs_by_field, temperature, latency_ms, model):
             "model": model,
         }
         lines.append(json.dumps(event, ensure_ascii=False) + "\n")
-    # Binary append: no newline translation on Windows, and one write for the whole call.
-    with open(path, "ab") as f:
-        f.write("".join(lines).encode("utf-8"))
+    # One append-only write for the whole call, so a console and a CLI sharing the log never split a line.
+    append_line(path, "".join(lines).encode("utf-8"))

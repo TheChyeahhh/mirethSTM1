@@ -4,16 +4,20 @@ A free, open-source decision engine by Mireth AI: ask typed questions about a te
 
 ## What it is, and what it is not
 
-MirethSTM1 is a free, Apache-2.0, Jev-style approximation of TypeSafe's Jev, not an equivalent. Jev is a model trained for calibrated decisions. MirethSTM1 is an inference method on a stock open model (Qwen3), so its probabilities are the base model's own, rescaled by a temperature fitted on held-out labels. What it tries to do well is narrow and checkable: it scores the full text of every answer option instead of a single letter or first token, it returns an expected value and a distribution for score questions, it will publish accuracy and calibration numbers together with the script that produced them, and it targets native Windows with an NVIDIA GPU (no WSL). Other open projects cover overlapping ground, among them [simple-jev](https://github.com/featherless-ai/simple-jev), [AnyJev](https://github.com/nokia-applied-research/AnyJev), [open-alternative-jev](https://github.com/ikermoel/open-alternative-jev), [jev-style](https://github.com/lawrence3699/jev-style), [Verdict](https://github.com/Heman10x-NGU/Verdict-open-jev) and [von](https://github.com/wfzyx/von). Try them and compare on your own labels before trusting any threshold.
+MirethSTM1 is a free, Apache-2.0, Jev-style approximation of TypeSafe's Jev, not an equivalent. Jev is a model trained for calibrated decisions. MirethSTM1 is an inference method on stock open models, so its probabilities are the base model's own, rescaled by a temperature fitted on held-out labels.
+
+What it does: you plug in a Hugging Face chat model; it reads the real text of every allowed answer (not a single letter or first token) for all questions in one packed pass; it returns an expected value and a distribution for score questions; it ships a console that races it against the same model writing the JSON itself; and it will publish accuracy, calibration and speed numbers with the scripts that produced them, tested on Windows with an NVIDIA RTX 5070.
+
+What it is not: the only open engine, the fastest, or the first to read label text. [Laya](https://github.com/NandhaKishorM/laya) trains small encoders that answer in milliseconds, [jevmlx](https://github.com/bnsd55/jevmlx) also scores label text, and [simple-jev](https://github.com/featherless-ai/simple-jev), [AnyJev](https://github.com/nokia-applied-research/AnyJev), [SemIf](https://github.com/TheoLeeCJ/SemIf-OpenJev), [open-alternative-jev](https://github.com/ikermoel/open-alternative-jev), [jev-style](https://github.com/lawrence3699/jev-style), [Verdict](https://github.com/Heman10x-NGU/Verdict-open-jev) and [von](https://github.com/wfzyx/von) cover overlapping ground. Try them and compare on your own labels before trusting any threshold.
 
 ## Status
 
-Pre-release. The engine, the `decide` command and the calibration code pass their tests on CPU. GPU runs and benchmark numbers land before v0.1, which ships 2026-10-04. The contract is [SPEC.md](SPEC.md).
+Pre-release. The engine, the `decide` command, the console and the calibration code pass their tests on CPU (Qwen3-0.6B and Qwen2.5-1.5B-Instruct). GPU runs and benchmark numbers land before v0.1, which ships 2026-10-04. The contract is [SPEC.md](SPEC.md).
 
 ## How it works
 
 1. Prefill the text and all questions once into a KV cache.
-2. Score every allowed answer of every question as a whole label (the summed log-probs of all its tokens), reusing the cached prefix.
+2. Score every allowed answer of every question as a whole label (the summed log-probs of all its tokens), all in one packed pass on top of the cached prefix.
 3. Turn each question's label scores into probabilities with a softmax.
 4. Divide the scores by a temperature T before the softmax; T is fitted on held-out labels (1.0 until the benchmark sets it).
 
@@ -76,7 +80,7 @@ print(result["answers"]["category"]["choice"])  # billing
 raw = engine.score(text, questions)  # {question: {label: summed log-prob}}, before temperature
 ```
 
-`Engine.load` also takes `device`, `dtype`, `chunk_size`, `temperature` and `event_log` (see SPEC.md section 4).
+`Engine.load` also takes `device`, `dtype`, `batch_tokens`, `temperature`, `event_log` and `tarnlight` (see SPEC.md section 4). Any Hugging Face chat model id works in place of the default; models the engine would score wrongly (sliding-window attention, logits changed after the output head) are refused with a clear error.
 
 ### Command line
 
@@ -92,7 +96,7 @@ PowerShell has no `<`, and piping the file re-encodes it (Windows PowerShell tur
 cmd /c "mirethstm decide --schema s.json < ctx.txt"
 ```
 
-Options: `--model`, `--temperature`, `--device`, `--chunk-size`, `--state-json` (read stdin as JSON) and `--log events.jsonl` (append one JSON line per question, for a live console). A bad questions map exits with code 2.
+Options: `--model`, `--temperature`, `--device`, `--batch-tokens`, `--state-json` (read stdin as JSON), `--log events.jsonl` (append one JSON line per question) and `--no-tarnlight`. A bad questions map exits with code 2.
 
 The state is stdin exactly as read, so a final newline in `ctx.txt` is part of it and moves the numbers slightly. Output of the example above with `--model Qwen/Qwen3-0.6B --device cpu` and a `ctx.txt` that ends in one newline (numbers shortened here). This small model at T = 1 is overconfident, which is what the fitted temperature is for:
 
@@ -113,11 +117,24 @@ The state is stdin exactly as read, so a final newline in `ctx.txt` is part of i
 }
 ```
 
+## Console
+
+```
+mirethstm console
+```
+
+Opens a local page at http://127.0.0.1:8766 that races MirethSTM1 against the same model writing the JSON itself, side by side, like the demo that started this project. Pick a scenario and a model, edit the text if you like, and press Run comparison. The left card shows every answer with its probability at once. The right card shows the model's own JSON as it is generated, with answers outside the allowed set marked as hallucinated. A pill on top shows how many times faster MirethSTM1 was (or slower, when it was). The default model is Qwen/Qwen2.5-1.5B-Instruct, the original demo's model; switch models from the page. Options: `--model`, `--device`, `--host`, `--port`, `--no-tarnlight`.
+
+## Tarnlight
+
+If [Tarnlight](https://github.com/TheChyeahhh/tarnlight) is installed, every decision (from the SDK, the CLI or the console) also shows up there live. MirethSTM1 never needs it: nothing is written unless Tarnlight's drop folder already exists, and a failed write never fails a decision. Turn it off with `tarnlight=False` or `--no-tarnlight`.
+
 ## Models and licenses
 
 | Model | Role | License |
 | --- | --- | --- |
-| [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) | default | Apache-2.0 |
+| [Qwen/Qwen2.5-1.5B-Instruct](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct) | console default (the original demo's model) | Apache-2.0 |
+| [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) | SDK and CLI default | Apache-2.0 |
 | [Qwen/Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B) | fast mode | Apache-2.0 |
 | [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) | CPU tests | Apache-2.0 |
 

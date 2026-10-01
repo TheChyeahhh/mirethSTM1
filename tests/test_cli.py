@@ -1,4 +1,4 @@
-"""mirethstm decide (SPEC 5)."""
+"""mirethstm decide and mirethstm console (SPEC 5)."""
 
 import io
 import json
@@ -47,7 +47,8 @@ def test_defaults(stub, monkeypatch, tmp_path, capsys):
     feed_stdin(monkeypatch, "The striker scored twice. Café crème.\n")
     assert cli.main(["decide", "--schema", write_schema(tmp_path)]) == 0
     assert stub.loads == [("Qwen/Qwen3-4B-Instruct-2507",
-                           {"device": None, "chunk_size": 8, "temperature": None, "event_log": None})]
+                           {"device": None, "batch_tokens": 2048, "temperature": None, "event_log": None,
+                            "tarnlight": True})]
     assert stub.decisions == [("The striker scored twice. Café crème.\n", QUESTIONS)]
     assert json.loads(capsys.readouterr().out) == RESULT
 
@@ -56,9 +57,10 @@ def test_all_options_and_state_json(stub, monkeypatch, tmp_path, capsys):
     feed_stdin(monkeypatch, '{"ticket": {"body": "refund please"}, "tags": ["a", "b"]}')
     log = str(tmp_path / "events.jsonl")
     argv = ["decide", "--schema", write_schema(tmp_path), "--model", "some/model", "--temperature", "1.5",
-            "--device", "cpu", "--chunk-size", "3", "--log", log, "--state-json"]
+            "--device", "cpu", "--batch-tokens", "3", "--log", log, "--state-json", "--no-tarnlight"]
     assert cli.main(argv) == 0
-    assert stub.loads == [("some/model", {"device": "cpu", "chunk_size": 3, "temperature": 1.5, "event_log": log})]
+    assert stub.loads == [("some/model", {"device": "cpu", "batch_tokens": 3, "temperature": 1.5,
+                                          "event_log": log, "tarnlight": False})]
     assert stub.decisions == [({"ticket": {"body": "refund please"}, "tags": ["a", "b"]}, QUESTIONS)]
     assert json.loads(capsys.readouterr().out) == RESULT
 
@@ -93,15 +95,38 @@ def test_unreadable_input_exits_2_without_loading(stub, monkeypatch, tmp_path, c
 
 @pytest.mark.parametrize("argv", [
     [], ["decide"], ["serve"],
-    ["decide", "--schema", "s.json", "--chunk-size", "x"],
-    ["decide", "--schema", "s.json", "--chunk-size", "0"],
+    ["decide", "--schema", "s.json", "--batch-tokens", "x"],
+    ["decide", "--schema", "s.json", "--batch-tokens", "0"],
+    ["decide", "--schema", "s.json", "--chunk-size", "8"],
+    ["console", "--port", "x"], ["console", "--schema", "s.json"],
     ["decide", "--schema", "s.json", "--temperature", "0"],
 ])
-def test_argument_errors(stub, argv):
+def test_argument_errors(stub, served, argv):
     with pytest.raises(SystemExit) as exit_info:
         cli.main(argv)
     assert exit_info.value.code == 2
+    assert stub.loads == [] and served == []
+
+
+@pytest.fixture
+def served(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli.console, "serve", lambda **settings: calls.append(settings))
+    return calls
+
+
+def test_console_defaults(stub, served):
+    assert cli.main(["console"]) == 0
+    assert served == [{"model": "Qwen/Qwen2.5-1.5B-Instruct", "device": None, "host": "127.0.0.1",
+                       "port": 8766, "tarnlight": True}]
     assert stub.loads == []
+
+
+def test_console_options(served):
+    argv = ["console", "--model", "some/model", "--device", "cpu", "--host", "0.0.0.0", "--port", "9000",
+            "--no-tarnlight"]
+    assert cli.main(argv) == 0
+    assert served == [{"model": "some/model", "device": "cpu", "host": "0.0.0.0", "port": 9000, "tarnlight": False}]
 
 
 @pytest.mark.model
@@ -116,7 +141,7 @@ def test_end_to_end(engine, monkeypatch, tmp_path, capsys):
     feed_stdin(monkeypatch, "The home team won the football match 3-1 after their striker scored twice.")
     log = tmp_path / "events.jsonl"
     argv = ["decide", "--schema", write_schema(tmp_path, questions), "--model", engine.model_id,
-            "--device", str(engine.model.device), "--chunk-size", "2", "--log", str(log)]
+            "--device", str(engine.model.device), "--batch-tokens", "16", "--log", str(log), "--no-tarnlight"]
     assert cli.main(argv) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["model"] == engine.model_id

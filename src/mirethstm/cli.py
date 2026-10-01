@@ -1,9 +1,10 @@
-"""Command line: mirethstm decide (SPEC 5)."""
+"""Command line: mirethstm decide and mirethstm console (SPEC 5)."""
 
 import argparse
 import json
 import sys
 
+from . import console
 from .engine import Engine
 from .schema import validate
 
@@ -18,17 +19,29 @@ def _parser():
     decide.add_argument("--model", default=DEFAULT_MODEL, help=f"Hugging Face model id (default {DEFAULT_MODEL})")
     decide.add_argument("--temperature", type=float, help="softmax temperature (default: the model's shipped value, else 1.0)")
     decide.add_argument("--device", help='"cuda" or "cpu" (default: cuda when available)')
-    decide.add_argument("--chunk-size", type=int, default=8, help="sequences per cached batch (default 8)")
+    decide.add_argument("--batch-tokens", type=int, default=2048, help="candidate tokens per scoring pass (default 2048)")
     decide.add_argument("--log", help="append the JSONL events of this call to this file")
     decide.add_argument("--state-json", action="store_true", help="parse stdin as JSON instead of a plain string")
+    decide.add_argument("--no-tarnlight", action="store_true", help="do not feed Tarnlight's drop folder")
+    race = commands.add_parser("console", help="race view in the browser: MirethSTM1 next to normal generation")
+    race.add_argument("--model", default=console.DEFAULT_MODEL,
+                      help=f"Hugging Face model id to load first (default {console.DEFAULT_MODEL})")
+    race.add_argument("--device", help='"cuda" or "cpu" (default: cuda when available)')
+    race.add_argument("--host", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
+    race.add_argument("--port", type=int, default=8766, help="port to listen on (default 8766)")
+    race.add_argument("--no-tarnlight", action="store_true", help="do not feed Tarnlight's drop folder")
     return parser
 
 
 def main(argv=None):
     parser = _parser()
     args = parser.parse_args(argv)
-    if args.chunk_size < 1:
-        parser.error("--chunk-size must be at least 1")
+    if args.command == "console":
+        console.serve(model=args.model, device=args.device, host=args.host, port=args.port,
+                      tarnlight=not args.no_tarnlight)
+        return 0
+    if args.batch_tokens < 1:
+        parser.error("--batch-tokens must be at least 1")
     if args.temperature is not None and not args.temperature > 0:
         parser.error("--temperature must be greater than 0")
     try:
@@ -42,7 +55,7 @@ def main(argv=None):
     except (OSError, ValueError) as e:  # ValueError covers SchemaError, bad JSON and bad UTF-8
         print(f"mirethstm: {e}", file=sys.stderr)
         return 2
-    engine = Engine.load(args.model, device=args.device, chunk_size=args.chunk_size,
-                         temperature=args.temperature, event_log=args.log)
+    engine = Engine.load(args.model, device=args.device, batch_tokens=args.batch_tokens,
+                         temperature=args.temperature, event_log=args.log, tarnlight=not args.no_tarnlight)
     print(json.dumps(engine.decide(state, questions), indent=2))
     return 0
