@@ -40,7 +40,7 @@ Not built: the MCP server (first on the cut list) and a FastAPI server (replaced
 5. The MCP server.
 6. Move to torch 2.14 on cu130.
 
-## Sunday 10/4: release
+## Release (done 2026-10-02, two days early)
 
 1. Fresh clone on Windows, run the README install commands exactly, full test suite.
 2. README final pass: honest framing, license table, credits, trademark note, no em dashes.

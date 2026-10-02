@@ -1,4 +1,4 @@
-# Handoff: release candidate, 2026-10-02
+# Handoff: v0.1.0, released 2026-10-02
 
 Branch `day1-scaffold`. The contract is `SPEC.md`, the plan is `ROADMAP.md`, the numbers are `docs/benchmark.md` and `docs/gpu-notes.md`, the research is `docs/research/` (start with `00-index.md`, `16-landscape-summary.md` and `17-open-weight-decision-models.md`).
 
@@ -66,7 +66,7 @@ Not verified:
 - Score questions are TypeSafe's level list. No numeric min/max in v0.1.
 - torch 2.11 on cu128 until after the release.
 - Honest README: no "first", "only" or "fastest"; other projects named.
-- Repo goes public on Sunday after the founder's review.
+- Repo went public on 2026-10-02 after the founder's review (two days before the promised Sunday).
 - Match the original demo's model first, then offer a list of approved models.
 - The local TypeSafe-compatible API costs nothing and is tied to no account.
 - The founder waits to post until the final numbers and the video exist (they do now).
@@ -77,7 +77,7 @@ Not verified:
 2. After the release: build the second backend so GLiNER2.5-Decide can be picked and raced in the console.
 3. After the release: build the MCP server.
 
-The only thing left for the founder is the Sunday review and the word to go public.
+v0.1.0 is released. Next is the after-release list in `ROADMAP.md`.
 
 ## Run it
 
@@ -98,7 +98,7 @@ $env:MIRETHSTM_TEST_DEVICE = "cuda"; .\.venv\Scripts\python.exe -m pytest -q -m 
 
 Fresh machine: see the README install section (venv, torch from the cu128 index, `pip install -e ".[dev,bench]"`).
 
-## Release checklist (Sunday)
+## Release checklist (done 2026-10-02)
 
 1. Founder reads the README, `docs/benchmark.md` and the console once.
 2. Fresh clone on Windows, README install commands exactly, full test suite.

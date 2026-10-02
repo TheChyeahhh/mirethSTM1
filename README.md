@@ -12,7 +12,7 @@ What it is not: the only open engine, the fastest, or the first to read label te
 
 ## Status
 
-Pre-release; v0.1 ships 2026-10-04. The engine, the `decide` command, the console and the calibration code pass their tests on CPU (Qwen3-0.6B, Qwen2.5-1.5B-Instruct, SmolLM3-3B and Qwen3-4B-Instruct-2507). The benchmark below ran on the GPU on 2026-10-02; the test results per model, on the GPU and on the CPU, are in [docs/gpu-notes.md](docs/gpu-notes.md). The contract is [SPEC.md](SPEC.md).
+v0.1.0, released 2026-10-02. The engine, the `decide` command, the console and the calibration code pass their tests on CPU (Qwen3-0.6B, Qwen2.5-1.5B-Instruct, SmolLM3-3B and Qwen3-4B-Instruct-2507). The benchmark below ran on the GPU on 2026-10-02; the test results per model, on the GPU and on the CPU, are in [docs/gpu-notes.md](docs/gpu-notes.md). The contract is [SPEC.md](SPEC.md).
 
 ## How it works
 

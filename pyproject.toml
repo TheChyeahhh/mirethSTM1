@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mirethstm"
-version = "0.0.1"
+version = "0.1.0"
 description = "MirethSTM1: a free, Jev-style decision engine that scores typed answers with a local model."
 readme = "README.md"
 license = "Apache-2.0"
