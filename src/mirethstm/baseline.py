@@ -14,7 +14,7 @@ from transformers.generation.streamers import BaseStreamer
 from . import schema as sch
 from .engine import encode, prefix_ids
 
-# Replace schema.SYSTEM_PROMPT and schema.ANSWER_RULES: all questions in one reply.
+# The baseline's own system message and closing rule: every question in one prompt, all answers in one reply.
 BASELINE_SYSTEM = (
     "You read a state and answer questions about it. You answer every question in one reply, "
     "as a single JSON object."

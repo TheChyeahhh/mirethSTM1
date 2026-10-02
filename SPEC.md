@@ -37,7 +37,7 @@ Matches the live TypeSafe API as captured on 2026-09-30 (`docs/research/04-types
 | `score` | `instructions`; `criteria`: ordered array of level descriptions | 1 to 10 levels (TypeSafe docs say 2 to 10; the live API accepts 1). Levels are addressed by 0-based index |
 
 - `instructions` and descriptions may be strings, objects or arrays. Non-strings are rendered as compact JSON. `instructions` is optional for every type, as in TypeSafe's own SDK (`Noul()`, `Choice(criteria=...)`); without it the question block shows only its criteria.
-- Question ids are for code only. They never reach the model (the prompt uses `q1`, `q2`, ... in request order).
+- Question ids are for code only. They never reach the model (every question is `q1` in its own branch, section 3.1).
 - `model` is accepted and ignored for routing: the engine answers with the model it has loaded.
 - Validation failures raise `mirethstm.SchemaError` (HTTP 422): state not a string, object or array; unknown type; missing or wrong-typed fields; noul `criteria` keys other than `"true"`/`"false"`; empty option name; 0 or more than 255 options; 0 or more than 10 levels; a `null` score level; empty `questions`. A `null` noul description counts as absent.
 
@@ -62,62 +62,70 @@ Matches the live TypeSafe API as captured on 2026-09-30 (`docs/research/04-types
 - `choice`: `choice` is the most likely option (ties go to the earlier option in the request); `probabilities` has every option, in request order, summing to 1.
 - `score`: `score` = sum over levels of index times probability (range 0 to n-1); `legend` and `probabilities` are keyed by the index as a string. Non-string level descriptions appear in `legend` as compact JSON.
 - `confidence` (choice and score) is OUR formula, not TypeSafe's (theirs is undisclosed): `(K * p_max - 1) / (K - 1)` for K >= 2 options or levels, and `1.0` when K = 1. It matches TypeSafe's one published three-option example; it is documented as ours.
-- `usage.input_tokens` = prefill tokens plus every token fed for each label (its question's suffix plus its candidate). `usage.output_tokens` = 0 (nothing is generated).
+- `usage.input_tokens` = the shared part's tokens, plus every token of each scored question's branch, template tail and suffix (once per question), plus every label's candidate tokens. A question with one label adds nothing. `usage.output_tokens` = 0 (nothing is generated).
 - Precision: the Python API and `POST /v1/decide` return full floats. The compatibility route `POST /v1/systemone` rounds every number to 2 decimals, as TypeSafe does.
 
 ## 3. Scoring method (normative)
 
-### 3.1 Prompt
+### 3.1 Prompt: every question answered as if it were alone
 
-Rendered with the model's chat template, `add_generation_prompt=True`, `enable_thinking=False` (Qwen3 hybrid models then end the prefix with an empty think block; 2507 Instruct ignores the flag).
+Measured 2026-10-01 (Qwen2.5-1.5B-Instruct, 200 AG News articles, four yes/no questions with known answers plus the topic choice): one question per call 86 percent right; the same questions inside one 20-question call 81 percent when placed first, 58 percent when placed last and 50 percent when spread out (later yes/no questions were answered yes for every article). So the questions of a call never share a prompt. The text is read once; every question then gets a private branch that holds its own question and nothing of the others. This is also how TypeSafe describes Jev: questions of one request cannot see one another.
+
+Rendered with the model's chat template, `add_generation_prompt=True`, `enable_thinking=False` (Qwen3 hybrid models then put an empty think block before the answer; 2507 Instruct ignores the flag).
 
 System message, exactly:
 
 ```
-You read a state and answer questions about it. You answer one question per reply, as a JSON object that holds only that question's key.
+You read a state and answer questions about it. You answer one question per reply, as a JSON object that holds only that question's key. A yes/no question takes true or false.
 ```
 
-User message (the state first, the questions right before the answer: measured 2026-10-01, putting the questions first cut AG News accuracy on Qwen2.5-1.5B-Instruct from 0.84 to 0.48, and restating them after the state did not recover it):
+Shared part, read once (the template's head with that system message, and the start of the user message):
 
 ```
 State:
 <state>
 
-Questions:
-<question blocks, separated by one blank line>
-
-Answer one question per reply as a JSON object with only that question's key, for example {"q1": true}. A yes/no question takes true or false. A choice question takes one option name as a JSON string, exactly as written. A score question takes one level number.
 ```
 
+Private branch of each question (the rest of the user message, then the template's tail, then the answer):
+
+```
+Question:
+<question block>
+```
+
+- The only answer rule is the yes/no sentence in the system message; a branch holds only its question. Measured (bf16, one question per call, three row samples of about 900 rows per dataset on four datasets plus the yes/no probe, three models): against repeating a full rule after every question it is within noise on Qwen3-4B-Instruct-2507 (-0.003, 95 percent interval -0.007 to +0.003) and better on the two small models (Qwen2.5-1.5B-Instruct 0.712 against 0.702, Qwen3-1.7B 0.724 against 0.697), and it needs about half the tokens for 28 questions. Known cost, accepted for speed: Qwen3-4B-Instruct-2507 is 1.6 points lower on the yes/no probe than with a rule and example right before each answer, and Qwen2.5-1.5B-Instruct loses 5 points on Banking77 while gaining 10 on Yelp (`docs/benchmark.md`). Eight wordings were measured in all.
 - `<state>`: a string verbatim; an object or array as `json.dumps(state, ensure_ascii=False, indent=2)`.
-- Question blocks, where `k` is the 1-based position of the question in the request:
+- Question block; every branch uses the key `q1`, since each question is alone in its branch (caller ids never reach the model):
 
 ```
-qk (yes/no): <instructions>
+q1 (yes/no): <instructions>
   true: <criteria.true>          (line omitted when absent)
   false: <criteria.false>        (line omitted when absent)
 
-qk (choice): <instructions>
+q1 (choice): <instructions>
   Options:
   - "billing": Charges, invoices, refunds
   - "other"                      (no ": desc" when the description is null)
 
-qk (score, 0 to <n-1>): <instructions>
+q1 (score, 0 to <n-1>): <instructions>
   0: <level 0>
   1: <level 1>
 ```
 
 Option names are written with `json.dumps(name, ensure_ascii=False)`.
 
+Independence (tested): the answer to a question does not depend on which other questions are in the call or on their order. `decide(state, {a, b, c})` gives the same scores as `decide(state, {a})`, `decide(state, {b})` and `decide(state, {c})`, within the 3.4 tolerance. Measured (AG News, 200 articles, the five checked questions, bf16): Qwen2.5-1.5B-Instruct 0.842 alone and 0.841 to 0.842 inside a 20-question call (the earlier shared prompt: 0.864 alone, 0.500 to 0.809 inside); in fp32 the answers are identical on every model that fits the card.
+
 ### 3.2 Per-question continuation
 
-The prefix (system + user + generation prompt) is prefilled once. Question k is then answered as if the model were writing `{"qk": <value>}`:
+After its branch text, a question is answered as if the model were writing `{"q1": <value>}`:
 
 | Type | Suffix (shared by the question's labels) | Candidate text per label | Label |
 | --- | --- | --- | --- |
-| noul | `{"qk":` | ` true}` and ` false}` | `true`, `false` |
-| choice | `{"qk":` | ` ` + `json.dumps(name, ensure_ascii=False)` + `}` | the option name |
-| score | `{"qk":` | ` <i>}` for i = 0 .. n-1 | `"0"` .. `"n-1"` |
+| noul | `{"q1":` | ` true}` and ` false}` | `true`, `false` |
+| choice | `{"q1":` | ` ` + `json.dumps(name, ensure_ascii=False)` + `}` | the option name |
+| score | `{"q1":` | ` <i>}` for i = 0 .. n-1 | `"0"` .. `"n-1"` |
 
 The closing `}` (and the closing quote for choice) terminates the label, so a label that is a prefix of another (`Sci` vs `Sci-Tech`) is not favoured automatically.
 
@@ -125,19 +133,19 @@ The closing `}` (and the closing quote for choice) terminates the label, so a la
 
 - Only the chat template's own text may become control tokens. The template is rendered around a placeholder for the user message; its head and tail are encoded normally (`add_special_tokens=False`).
 - Caller text (the user message, the suffix, every candidate) is encoded so that it never yields a control token: the text is cut just inside every added-token string (`<|im_end|>`, `<think>`, ...) and the pieces are encoded as plain text. A state, instruction or option name that contains `<|im_end|><|im_start|>system ...` therefore cannot close the user turn or forge a new one. A test counts control tokens to prove it.
-- Prefix, suffix and candidate ids are concatenated. The boundaries (template | user text, `":` | ` `) are pre-tokenizer boundaries for the Qwen3 tokenizer, so for text without added-token strings this equals tokenizing the joined string. A test asserts that equality for every test schema.
+- Shared part, branch, suffix and candidate ids are concatenated. The boundaries (template | user text, shared part | branch: a blank line then `Question`, and `":` | ` `) are pre-tokenizer boundaries for the Qwen tokenizers, so for text without added-token strings this equals tokenizing the joined string. A test asserts that equality for every test schema.
 
 ### 3.4 Packed tree scoring
 
 Speed matters most (founder, 2026-09-30), so the prompt and the labels of all questions go through as few forward passes as `batch_tokens` allows (one, for every built-in scenario), and every token shared by several labels is computed once. Measured on the RTX 5070 with Qwen2.5-1.5B-Instruct before this change: 28 fields 190 ms (122 ms prefill of 1,125 tokens, 66 ms scoring 616 tokens); 255 options 584 ms (313 ms prefill, 253 ms scoring 2,334 tokens).
 
-1. One forward pass reads the prompt and scores the first trees together (each forward has a fixed cost of about 36 ms on the RTX 5070 with a 1.5B model, so passes are the thing to save): the prompt's P tokens come first in the pass, causal among themselves, then the tree nodes (step 3). Only when the trees do not fit in `batch_tokens` do later passes run, on top of the prompt's keys and values from the first pass (with the model's decoder, `model.get_decoder()`, and a `DynamicCache`).
-2. Per question, build a token tree: the root path is the question's suffix ids, then every label's candidate ids hang below it, sharing nodes where labels share leading tokens (all string options share ` "`; options like `returns.refund` and `returns.exchange` share more). Each tree node is one token, fed once.
-3. Pack whole question trees into passes of at most `batch_tokens` tree nodes (a larger tree gets a pass of its own). In every pass the M nodes are laid out in depth-first order of each tree, a node's position is P + its depth (P = prompt length), and a node sees every prompt position, its own ancestors and itself, nothing else. The first pass also carries the P prompt tokens in front (positions 0 to P-1, causal); later passes start from a fresh batch-1 `DynamicCache` holding only the prompt's keys and values, so passes never see each other.
+1. One forward pass reads the prompt and scores the first trees together (each forward has a fixed cost of about 36 ms on the RTX 5070 with a 1.5B model, so passes are the thing to save): the shared part's P tokens (3.1) come first in the pass, causal among themselves, then the tree nodes (step 3). Only when the trees do not fit in `batch_tokens` do later passes run, on top of the prompt's keys and values from the first pass (with the model's decoder, `model.get_decoder()`, and a `DynamicCache`).
+2. Per question, build a token tree: the root path is the question's branch (3.1: its question text, the template tail) and suffix ids, then every label's candidate ids hang below it, sharing nodes where labels share leading tokens (all string options share ` "`; options like `returns.refund` and `returns.exchange` share more). Each tree node is one token, fed once.
+3. Pack whole question trees into passes of at most `batch_tokens` tree nodes (a larger tree gets a pass of its own). The leading root tokens that every tree of a pass shares (`Question`, `:` and so on) are fed once, as common ancestors of all trees in that pass; it is exact, and it keeps 28 questions at about 1,450 tokens in one forward. In every pass the M nodes are laid out in depth-first order of each tree, a node's position is P + its depth (P = prompt length), and a node sees every prompt position, its own ancestors and itself, nothing else. The first pass also carries the P prompt tokens in front (positions 0 to P-1, causal); later passes start from a fresh batch-1 `DynamicCache` holding only the prompt's keys and values, so passes never see each other.
 4. Apply the output head (`model.get_output_embeddings()`) only at nodes whose children are candidate tokens; `log_softmax` in float32. A label's score is the sum, along its path, of each candidate token's log-prob given its parent node. The suffix tokens are context, not scored.
 5. Raw score of a label: `s = sum of its candidate-token log-probs` (no length normalization).
 
-Acceptance: the result equals scoring each full sequence without a cache to within 2e-4 in summed log-prob in fp32 on CPU, and 2e-3 in fp32 on the GPU (on the 2,058-token router prompt every GPU fp32 path, the plain uncached reference included, is 1.2e-3 to 1.3e-3 off an fp64 result on Qwen3-1.7B). Measured after the one-pass change (RTX 5070, bf16, warm, p50): Qwen2.5-1.5B-Instruct 28 fields 100 ms, 255 options 221 ms, 1 to 10 fields 35 ms; Qwen3-4B-Instruct-2507 28 fields 275 ms, 255 options 637 ms. In bf16 a single path is up to about 1.8 off its own fp32 result on small models, so bf16 is only checked for staying within that noise (2.5).
+Acceptance: the result equals scoring each full sequence without a cache to within 1e-3 in summed log-prob in fp32 on the CPU (measured up to 2.2e-4 on Qwen3-4B-Instruct-2507; exactly 0 in fp64 on Qwen3-0.6B) and 2e-3 in fp32 on the GPU (on the 2,058-token router prompt every GPU fp32 path, the plain uncached reference included, is 1.2e-3 to 1.3e-3 off an fp64 result on Qwen3-1.7B). In bf16 raw scores of unlikely labels move by several units, so bf16 tests compare likely labels by their share among the question's labels. Measured speed (RTX 5070, bf16, warm, p50): Qwen2.5-1.5B-Instruct 28 questions 96 ms, 255 options 209 ms, 1 to 10 questions 35 to 37 ms; Qwen3-4B-Instruct-2507 28 questions 271 ms, 255 options 615 ms.
 
 ### 3.5 Probabilities
 
@@ -156,7 +164,7 @@ engine = Engine.load(
     "Qwen/Qwen3-4B-Instruct-2507",
     device=None,        # "cuda" if available, else "cpu"
     dtype=None,         # bfloat16 on cuda, float32 on cpu
-    batch_tokens=2048,  # candidate tokens per scoring pass (section 3.4); bounds memory
+    batch_tokens=4096,  # tree nodes per scoring pass (section 3.4); bounds memory. A question's tree holds its own text, so 4096 keeps every built-in scenario in one pass
     temperature=None,   # None: the shipped default for this model (section 9), else 1.0
     event_log=None,     # path: append the frozen JSONL events (section 8)
     tarnlight=True,     # feed Tarnlight when its drop folder exists (section 10.3)
@@ -224,7 +232,7 @@ Any new key needs a new schema version and the founder's sign-off.
 
 - `mirethstm.calibration.fit_temperature(logits, labels) -> float`: one scalar T minimizing mean NLL of `softmax(s / T)` over a calibration set. `logits` is a list of 1-D arrays (questions may have different label counts), `labels` the index of the true label. Bounded golden-section search on log T over [0.05, 20]; raises `ValueError` if the optimum sits at a bound.
 - `mirethstm.calibration.ece(confidences, correct, n_bins=15) -> float`: top-label expected calibration error, equal-width bins over [0, 1] (Guo et al. 2017). The benchmark reports 15-bin ECE as the headline and 10-bin ECE for comparison with Kev.
-- Shipped defaults: `mirethstm.calibration.DEFAULT_TEMPERATURES = {model_id: T}`, filled from the benchmark's calibration splits before release (empty until then, so T = 1.0).
+- Shipped defaults: `mirethstm.calibration.DEFAULT_TEMPERATURES = {model_id: T}`, one pooled T per approved model, fitted on the benchmark's calibration splits (2026-10-02: 2.112, 7.930, 7.007, 2.702 and 4.639). Models not in the table use T = 1.0. Known limit: one T per model fits yes/no questions poorly on two models; a T per question type is the next step.
 - Accuracy and macro-F1 do not change with T (argmax is invariant); a test enforces it.
 
 ## 10. Console (founder ruling 2026-09-30: a race view like the original demo)
@@ -242,7 +250,7 @@ Look and feel follows the original demo by Harsha Gundala (parallel vs normal in
   - Right, "Normal generation (<model>)": a grey milliseconds badge that ticks live; the model's own JSON appearing token by token as it is generated; when done, a red badge "N fields hallucinated" (and "invalid JSON" if it does not parse).
 - The state text of the chosen scenario is shown in an editable box, so a run can use any text.
 - Order: the MirethSTM1 run first, then the normal generation; each badge is that run's own wall time. One run at a time (one GPU).
-- Model picker: Qwen/Qwen2.5-1.5B-Instruct (default: the original demo's model, match it first), Qwen/Qwen3-1.7B, Qwen/Qwen3-4B-Instruct-2507, Qwen/Qwen3-0.6B, plus `--model` if it is another id. Switching frees the old model before loading the new one; the page shows "Loading <model>...".
+- Model picker: the approved list of `mirethstm/models.py` (section 11.1), each with its role and measured speed and accuracy; the default is Qwen/Qwen2.5-1.5B-Instruct (the fast model, and the original demo's model), plus `--model` if it is another id. Switching frees the old model before loading the new one; the page shows "Loading <model>...".
 - Built-in scenarios, our own neutral text: support ticket triage (28 fields), code change security review (28 fields), incident triage with score questions (about 20 fields), a 255-option request router (4 fields, one with 255 options).
 - Every MirethSTM1 run goes through `Engine.decide`, so it feeds Tarnlight (10.3) and the event log like any other call.
 
@@ -265,7 +273,7 @@ Feeds Tarnlight (the founder's public live console, `docs/research/08-console-in
 
 ## 11. Models and environment
 
-Any Hugging Face causal LM with a chat template plugs in: `Engine.load("<hub id or local path>")`, `--model`, or the console's model picker. The engine uses only `get_decoder()`, `get_output_embeddings()` and the tokenizer's chat template. Tested families: Qwen2.5 and Qwen3 (full model test suite passes on Qwen3-0.6B and Qwen2.5-1.5B-Instruct). `Engine.load` refuses, with a clear error, a model it would score wrongly: one with sliding-window or other non-full attention layers, or one whose forward changes the logits after the output head (softcapping, scaling).
+Any Hugging Face causal LM with a chat template plugs in: `Engine.load("<hub id or local path>")`, `--model`, or the console's model picker. The engine uses only `get_decoder()`, `get_output_embeddings()` and the tokenizer's chat template. Tested: the five approved models of 11.1 (Qwen2.5, Qwen3 and SmolLM3 families); the full test suite passes on each on the GPU. `Engine.load` refuses, with a clear error, a model it would score wrongly: one with sliding-window or other non-full attention layers, or one whose forward changes the logits after the output head (softcapping, scaling).
 
 ### 11.1 Approved models (founder, 2026-09-30: "switch models from a list of approved models")
 
@@ -276,15 +284,15 @@ Any Hugging Face causal LM with a chat template plugs in: `Engine.load("<hub id 
 3. `Engine.load` accepts it (full attention, no logit post-processing) and the full model test suite passes on the GPU.
 4. Its speed and its accuracy and calibration on the benchmark are measured and written into the list.
 
-Candidates to evaluate: Qwen2.5-0.5B-Instruct, Qwen2.5-1.5B-Instruct, Qwen3-0.6B, Qwen3-1.7B, Qwen3-4B-Instruct-2507, microsoft/Phi-4-mini-instruct (MIT), HuggingFaceTB/SmolLM3-3B, ibm-granite/granite-3.3-2b-instruct. Excluded up front: Qwen2.5-3B (non-commercial), gated or custom-license models (Llama, Gemma), sliding-window models.
+Evaluated 2026-10-01 and 2026-10-02. Approved: Qwen2.5-1.5B-Instruct, Qwen3-4B-Instruct-2507, Qwen3-1.7B, HuggingFaceTB/SmolLM3-3B, Qwen3-0.6B. Not approved: Qwen2.5-0.5B-Instruct (failed the bf16 GPU suite under the earlier test rule, not re-run), microsoft/Phi-4-mini-instruct (the loader refuses its sliding-window config, and lifting that exposes a position bug near 4,096 tokens), ibm-granite/granite-3.3-2b-instruct (its forward rescales the logits after the output head). Excluded up front: Qwen2.5-3B (non-commercial), gated or custom-license models (Llama, Gemma), sliding-window models. Trained decision models (fastino/GLiNER2.5-Decide, Mapika/decider) do not fit this engine; they need a backend of their own (`docs/research/17-open-weight-decision-models.md`).
 
 ### 11.2 Current roles
 
 | Role | Model | License | Notes |
 | --- | --- | --- | --- |
-| Match first | Qwen/Qwen2.5-1.5B-Instruct | Apache-2.0 | The original demo's model; console default. Match its speed, then compare |
-| Default SDK/CLI | Qwen/Qwen3-4B-Instruct-2507 | Apache-2.0 | Non-thinking only |
-| Fast | Qwen/Qwen3-1.7B | Apache-2.0 | Hybrid thinking; `enable_thinking=False` |
+| Fast, console default | Qwen/Qwen2.5-1.5B-Instruct | Apache-2.0 | The original demo's model. 96 ms for 28 questions, mean accuracy 0.728 |
+| Default SDK/CLI | Qwen/Qwen3-4B-Instruct-2507 | Apache-2.0 | Most accurate (0.760), 271 ms for 28 questions. Non-thinking only |
+| Alternative | Qwen/Qwen3-1.7B, HuggingFaceTB/SmolLM3-3B | Apache-2.0 | Hybrid thinking templates; `enable_thinking=False`. SmolLM3's template writes today's date into the prompt |
 | CPU tests | Qwen/Qwen3-0.6B | Apache-2.0 | fp32 on CPU (bf16 on this CPU is about 500x slower) |
 | Not used | Qwen2.5-3B | Qwen Research License (non-commercial) | |
 | Deferred | Qwen3.5 small models | Apache-2.0 | Hybrid linear attention; the plain KV cache does not apply |

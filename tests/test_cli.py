@@ -48,7 +48,7 @@ def test_defaults(stub, monkeypatch, tmp_path, capsys):
     feed_stdin(monkeypatch, "The striker scored twice. Café crème.\n")
     assert cli.main(["decide", "--schema", write_schema(tmp_path)]) == 0
     assert stub.loads == [("Qwen/Qwen3-4B-Instruct-2507",
-                           {"device": None, "batch_tokens": 2048, "temperature": None, "event_log": None,
+                           {"device": None, "batch_tokens": 4096, "temperature": None, "event_log": None,
                             "tarnlight": True})]
     assert stub.decisions == [("The striker scored twice. Café crème.\n", QUESTIONS)]
     assert json.loads(capsys.readouterr().out) == RESULT

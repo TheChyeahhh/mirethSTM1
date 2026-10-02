@@ -13,12 +13,13 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # the repository root holds the bench package
 
-from bench import arms, data, latency, metrics, public_items, report, run_bench  # noqa: E402
+from bench import arms, data, latency, metrics, multifield, public_items, report, run_bench  # noqa: E402
+from bench.common import slug  # noqa: E402
 from mirethstm import schema as sch  # noqa: E402
 from mirethstm.calibration import ece  # noqa: E402
-from mirethstm.engine import encode, prefix_ids  # noqa: E402
+from mirethstm.engine import branch_ids, encode, shared_ids  # noqa: E402
 
-from conftest import MODEL_ID, tolerance  # noqa: E402
+from conftest import MODEL_ID, max_diff, tolerance  # noqa: E402
 
 
 # --- metrics -------------------------------------------------------------------------------
@@ -115,14 +116,14 @@ QUESTIONS = {
 def test_first_token_suffix_ends_where_the_label_starts(tokenizer):
     plan = arms.first_token_plan(tokenizer, QUESTIONS)
     assert set(plan) == {"topic", "refund", "urgency"}  # one label: not scored, as in the engine
-    for k, (qid, q) in enumerate(QUESTIONS.items(), 1):
+    for qid, q in QUESTIONS.items():
         if qid not in plan:
             continue
         suffix, first = plan[qid]
-        assert suffix[:len(encode(tokenizer, sch.suffix(k)))] == encode(tokenizer, sch.suffix(k))
+        assert suffix[:len(encode(tokenizer, sch.SUFFIX))] == encode(tokenizer, sch.SUFFIX)
         for label, cand, token in zip(sch.labels(q), sch.candidates(q), first):
             # Suffix plus the scored token is how the engine's own continuation begins ...
-            assert (sch.suffix(k) + cand).startswith(tokenizer.decode(suffix + [token]))
+            assert (sch.SUFFIX + cand).startswith(tokenizer.decode(suffix + [token]))
             # ... and the scored token is the start of the label itself, not JSON syntax.
             start = tokenizer.decode([token]).lstrip(' "')
             assert start and label.startswith(start)
@@ -135,6 +136,16 @@ def test_first_token_ties(tokenizer):
     assert arms.tie_groups(labels, plan["topic"][1]) == [["Sci-Tech", "Sci/Tech"]]  # both start with " Sci"
     assert arms.tie_groups(["true", "false"], plan["refund"][1]) == []
     assert arms.tie_groups(sch.labels(QUESTIONS["urgency"]), plan["urgency"][1]) == []
+
+
+def test_salvage_takes_the_first_allowed_value_of_its_own_key():
+    # Output cut off in the middle (not valid JSON); q2 and q3 first hold a value that is not allowed.
+    text = '{"q1": "Sports", "q2": 0, "q3": 7, "q2": true, "q3": 3, "q1": "Sci'
+    topic, refund, urgency = (QUESTIONS[qid] for qid in ("topic", "refund", "urgency"))
+    assert arms.salvage(text, 1, topic) == "Sports"
+    assert arms.salvage(text, 2, refund) == "true"  # 0 is not an answer to a yes/no question
+    assert arms.salvage(text, 3, urgency) == "3"    # 7 is not a level
+    assert arms.salvage(text, 2, topic) is None and arms.salvage(text, 4, refund) is None
 
 
 def test_tie_rule_and_its_count_in_the_report():
@@ -313,6 +324,47 @@ def test_latency_schemas_and_rules():
         latency.field_schema(len(latency.SYNTHETIC) + 2, topic)
 
 
+# --- many questions in one call ----------------------------------------------------------------
+
+
+def test_multifield_modes_place_the_checked_questions():
+    checked = list(multifield.CHECKED)
+    alone, first, last, spread = (multifield.MODES[m][1] for m in ("alone", "first", "last", "spread"))
+    assert [list(call) for call in alone] == [[qid] for qid in checked]
+    for (call,), places in ((first, [1, 2, 3, 4, 5]), (last, [16, 17, 18, 19, 20]), (spread, [4, 8, 12, 16, 20])):
+        sch.validate("text", call)
+        assert len(call) == 20
+        assert [list(call).index(qid) + 1 for qid in checked] == places
+    assert multifield.truth("Sports") == {"topic": "Sports", "is_sports": "true", "is_business": "false",
+                                          "is_scitech": "false", "is_world": "false"}
+    assert sorted(multifield.TOPICS) == sorted(data.DATASETS["ag_news"].names)
+
+
+def _multifield_records(mode, shift):
+    """Two Sports articles: every answer right, except that `shift` > 1 turns is_world to yes in the second."""
+    records = []
+    for index in (0, 1):
+        scores = {"topic": {"World": -3.0, "Sports": -0.1 - shift, "Business": -4.0, "Sci/Tech": -5.0}}
+        for qid, name in multifield.IS_TOPIC.items():
+            scores[qid] = {"true": -0.2, "false": -2.0} if name == "Sports" else {"true": -2.0, "false": -0.5}
+        if index == 1:
+            scores["is_world"] = {"true": -2.0 + shift, "false": -0.5}
+        records.append({"model": "org/fake-model", "mode": mode, "index": index,
+                        "truth": multifield.truth("Sports"), "scores": scores, "latency_ms": 50.0})
+    return records
+
+
+def test_multifield_table_by_hand():
+    by_mode = {"alone": _multifield_records("alone", 0.0), "last": _multifield_records("last", 2.0)}
+    header, rows = multifield.table(by_mode)
+    assert header[:2] == ["Mode", "topic"] and [row[0] for row in rows] == [multifield.MODES[m][0] for m in by_mode]
+    #                  topic    is_sports      is_business    is_scitech     is_world       mean
+    assert rows[0][1:] == ["1.000", "1.000 [1.00]", "1.000 [0.00]", "1.000 [0.00]", "1.000 [0.00]", "1.000", "n/a", "n/a"]
+    # One of two is_world answers flips to yes: 9 of 10 answers right and equal to the alone mode's;
+    # the largest score difference is the 2.0 added to that score and taken from the two topic scores.
+    assert rows[1][1:] == ["1.000", "1.000 [1.00]", "1.000 [0.00]", "1.000 [0.00]", "0.500 [0.50]", "0.900", "0.900", "2"]
+
+
 # --- report from saved records (no model) -----------------------------------------------------
 
 
@@ -347,8 +399,28 @@ def test_report_rebuilds_from_records(tmp_path):
          **({"input_tokens": 300} if arm == "mireth" else
             {"output_tokens": 40, "valid_json": True, "hallucinated": 0, "missing": 1})}
         for i in range(9) for arm, base in (("mireth", 20.0), ("baseline", 400.0))])
+    for mode, shift in (("alone", 0.0), ("last", 2.0)):
+        _write(run, model, f"multifield.{mode}", _multifield_records(mode, shift))
+    # A second scoring arm, and the run "fake-fp32": the first 20 evaluation rows in another dtype, 0.8 added
+    # to the second-highest score in ten of them, the calibration rows unchanged, and the many-questions run
+    # without the flip.
+    first = [{**r, "arm": "first_token", "scores": dict(zip(labels, np.random.default_rng(i).normal(0, 1, 4).tolist()))}
+             for i, r in enumerate(by_split["eval"])]
+    _write(run, model, "ag_news.eval.first_token", first)
+    exact = []
+    for r in by_split["eval"][:20]:
+        second = sorted(r["scores"], key=r["scores"].get)[-2]
+        exact.append({**r, "scores": {**r["scores"], second: r["scores"][second] + (0.8 if r["index"] < 10 else 0.0)}})
+    _write(tmp_path / "fake-fp32", model, "ag_news.eval.mireth", exact)
+    _write(tmp_path / "fake-fp32", model, "ag_news.cal.mireth", by_split["cal"])
+    for mode in ("alone", "last"):
+        _write(tmp_path / "fake-fp32", model, f"multifield.{mode}", _multifield_records(mode, 0.0))
     md = report.build(run, run / "benchmark.md", resamples=50)
     text = md.read_text(encoding="utf-8")
+    assert "## Many questions in one call (SPEC 3.1)" in text and "### org/fake-model (AG News test, n = 2)" in text
+    assert "### org/fake-model, fp32 (AG News test, n = 2)" in text and "| 1.000 [0.00] | 1.000 | 1.000 | 0 |" in text
+    assert "| One call of 20, checked questions last (16 to 20) | 1.000 | 1.000 [1.00] |" in text
+    assert "| 0.500 [0.50] | 0.900 | 0.900 | 2 |" in text
     assert "### ag_news (fancyzhx/ag_news test, 4 labels, n = 30)" in text
     assert "| org/fake-model | Normal generation | 30 | 0.333 [" in text  # 10 of 30 right, invalid counted wrong
     assert "| 0.667 | 0.333 | 0.333 |" in text  # valid; salvaged: 10 right, 10 wrong, 10 unreadable; token cap
@@ -368,10 +440,30 @@ def test_report_rebuilds_from_records(tmp_path):
     row = next(line for line in text.splitlines() if line.startswith(f"| {model} | MirethSTM1 (full label) | ag_news |"))
     cells = [c.strip() for c in row.split("|")[1:-1]]
     assert cells[5].startswith(f"{ece15:.3f} [") and cells[6] == f"{nll:.3f}"
-    # A report written elsewhere links to diagrams kept next to it.
+    # The header counts the rows from the records; the summary row is the same numbers, one dataset.
+    assert ("- org/fake-model: dtype not recorded; scoring arms on 30 evaluation rows per dataset and 40 calibration "
+            "rows; normal generation on 30 evaluation rows; latency over 9 timed runs per field count.") in text
+    hits = [int(np.argmax(pi)) == g for pi, g in zip(p, gold)]
+    hits_first = [max(r["scores"], key=r["scores"].get) == r["gold"] for r in first]
+    assert (f"| {model} | 30 / 30 | {np.mean(hits):.3f} | {np.mean(hits_first):.3f} | 0.333 (0.667) | "
+            f"{np.mean(hits):.3f} | {ece15:.3f} |") in text
+    assert f"| {model} | 24.0 | n/a |" in text and f"| {model} | 404 | 99.0 |" in text  # 360 tokens in 3.636 s
+    mass = [float(np.exp(list(r["scores"].values())).sum()) for r in by_split["eval"]]  # exp(score) over the labels
+    assert f"| {model} | {np.median(mass):.3f} [{np.mean(np.array(mass) < 0.01):.3f}] |" in text
+    # Precision: the 20 shared rows against the fp32 run; 10 of 80 scores are 0.8 apart, which changes some
+    # answers; T fits the same 40 rows.
+    assert "## Precision: the same rows in other dtypes" in text
+    assert f"calibration rows per dataset: bf16 {cells[4]}, fp32 {cells[4]}." in text and cells[3] == cells[4]
+    same = np.mean([max(a["scores"], key=a["scores"].get) == max(b["scores"], key=b["scores"].get)
+                    for a, b in zip(by_split["eval"], exact)])
+    assert 0.5 <= same < 1
+    assert f"| ag_news | 20 | {np.mean(hits[:20]):.3f} / " in text
+    assert f"| {same:.3f} | 0.100 (0.80) | 10.0 / 10.0 |" in text
+    # A report written elsewhere links to the diagrams kept next to it: the MirethSTM1 arm only, no bin tables.
     elsewhere = report.build(run, tmp_path / "docs" / "benchmark.md", resamples=0, fig_dir=tmp_path / "docs" / "img")
-    assert "[png](img/org--fake-model.ag_news.mireth.png)" in elsewhere.read_text(encoding="utf-8")
-    assert (tmp_path / "docs" / "img" / "org--fake-model.ag_news.mireth.png").exists()
+    public = elsewhere.read_text(encoding="utf-8")
+    assert "[png](img/org--fake-model.ag_news.mireth.png)" in public and "| not published |" in public
+    assert [f.name for f in (tmp_path / "docs" / "img").iterdir()] == ["org--fake-model.ag_news.mireth.png"]
 
 
 # --- the arms on the test model (CPU) -----------------------------------------------------------
@@ -383,8 +475,9 @@ def test_first_token_arm_equals_uncached_forward(engine):
     state = "The match ended 3 to 1 after extra time."
     got = arms.first_token(engine, state, questions)
     plan = arms.first_token_plan(engine.tokenizer, questions)
-    prefix = prefix_ids(engine.tokenizer, state, questions)
     for qid, (suffix, first) in plan.items():
+        # Every question is asked alone, with the engine's own prompt for it (SPEC 3.1).
+        prefix = shared_ids(engine.tokenizer, state) + branch_ids(engine.tokenizer, questions[qid])
         with torch.inference_mode():
             ids = torch.tensor([prefix + suffix], device=engine.model.device)
             logits = engine.model(input_ids=ids).logits[0, -1].float()
@@ -397,11 +490,11 @@ def test_questions_first_arm_equals_uncached_forward(engine):
     questions = {k: QUESTIONS[k] for k in ("topic", "refund")}
     state = {"ticket": "Please refund me", "lang": "en"}
     got = arms.questions_first(engine, state, questions)
-    prefix = arms.questions_first_ids(engine.tokenizer, state, questions)
-    text = engine.tokenizer.decode(prefix)
-    assert text.index("Questions:") < text.index("State:")
-    for k, (qid, q) in enumerate(questions.items(), 1):
-        suffix = encode(engine.tokenizer, sch.suffix(k))
+    suffix = encode(engine.tokenizer, sch.SUFFIX)
+    for qid, q in questions.items():
+        prefix = arms.questions_first_ids(engine.tokenizer, state, q)
+        text = engine.tokenizer.decode(prefix)
+        assert text.index("Question:") < text.index("State:")
         for label, cand in zip(sch.labels(q), sch.candidates(q)):
             c = encode(engine.tokenizer, cand)
             with torch.inference_mode():
@@ -424,7 +517,7 @@ def test_tiny_run_all_three_arms(engine, tmp_path):
             if split == "eval" or arm in arms.SCORING]
     run = tmp_path / "tiny"
     run_bench.run_files(engine, MODEL_ID, jobs, run)
-    folder = run / MODEL_ID.replace("/", "--")
+    folder = run / slug(MODEL_ID)
     assert sorted(p.name for p in folder.iterdir()) == [
         "sst2.cal.first_token.jsonl", "sst2.cal.mireth.jsonl", "sst2.eval.baseline.jsonl",
         "sst2.eval.first_token.jsonl", "sst2.eval.mireth.jsonl"]
@@ -446,3 +539,18 @@ def test_tiny_run_all_three_arms(engine, tmp_path):
     text = report.build(run, run / "benchmark.md", resamples=20).read_text(encoding="utf-8")
     for name in ("MirethSTM1 (full label)", "Normal generation", "First token (original demo's method)"):
         assert f"| {MODEL_ID} | {name} |" in text
+
+
+@pytest.mark.model
+def test_multifield_scores_do_not_depend_on_the_other_questions(engine):
+    try:
+        rows, _ = data.samples("ag_news", 2, 0)
+    except (ConnectionError, FileNotFoundError) as e:
+        pytest.skip(f"ag_news is not cached: {e}")
+    by_mode = {mode: multifield.run_mode(engine, mode, rows, {"model": MODEL_ID}) for mode in ("alone", "spread")}
+    for row, alone, spread in zip(rows, by_mode["alone"], by_mode["spread"]):
+        assert alone["index"] == spread["index"] == row.index and list(alone["scores"]) == list(multifield.CHECKED)
+        assert alone["truth"] == multifield.truth(multifield.TOPICS[row.gold])
+        assert max_diff(spread["scores"], alone["scores"], engine) < tolerance(engine)
+    header, body = multifield.table(by_mode)
+    assert len(body) == 2 and len(body[0]) == len(header)

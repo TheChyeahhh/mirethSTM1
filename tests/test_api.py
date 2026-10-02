@@ -237,7 +237,8 @@ def test_busy_past_the_wait_is_529(server):
         got = call(server, "POST", "/v1/systemone", REQUEST)
         waited = time.monotonic() - began
     assert_error(got, 529, "busy")
-    assert waited >= 0.2 and server.engine.calls == []
+    # The clock moves in steps (15.6 ms on Windows), so a full wait can read one step short: 0.187 seen.
+    assert waited >= 0.2 - time.get_clock_info("monotonic").resolution and server.engine.calls == []
 
 
 def test_no_model_is_529(server):
@@ -310,9 +311,9 @@ def test_rejected_models_say_why():
 
 def test_note_shows_numbers_once_measured():
     m = models.get("Qwen/Qwen2.5-1.5B-Instruct")
-    assert models.note(m) == "Match first, 98 ms for 28 fields, 71% accuracy"
+    assert models.note(m) == "Fast, 96 ms for 28 fields, 73% accuracy"
     waiting = dataclasses.replace(m, status=models.PENDING, **dict.fromkeys(MEASURED))
-    assert models.note(waiting) == "Match first, not approved yet"
+    assert models.note(waiting) == "Fast, not approved yet"
     assert models.note(dataclasses.replace(waiting, role="", status=models.CANDIDATE)) == "Not evaluated yet"
     assert models.note(models.get("ibm-granite/granite-3.3-2b-instruct")).startswith("Not approved: Engine.load")
 

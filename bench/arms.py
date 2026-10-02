@@ -9,9 +9,12 @@
   probabilities are a softmax over the options. Options whose first tokens are the same token
   get the same score (a tie); the tie goes to the earlier option in the request, as in the
   original's argmax, and the report counts the ties and the predictions they decide.
-- questions_first: full-label scoring of the prompt with the questions before the state (the
-  order SPEC 3.1 measured and dropped), so the benchmark can compare the two orders. One
-  forward per label after one prefill: slow, a reference, not a speed claim.
+- questions_first: full-label scoring of the prompt with the question before the state (the
+  order that was measured and dropped), so the benchmark can compare the two orders. One
+  forward per label after one prefill per question: slow, a reference, not a speed claim.
+
+first_token and questions_first ask every question alone, with the engine's own prompt for one
+question (SPEC 3.1: the shared part, then that question's branch), so the arms compare like for like.
 """
 
 import json
@@ -22,7 +25,7 @@ from transformers import DynamicCache
 
 from mirethstm import baseline
 from mirethstm import schema as sch
-from mirethstm.engine import encode, prefix_ids
+from mirethstm.engine import branch_ids, encode, shared_ids, template_ids
 
 
 def mireth(engine, state, questions):
@@ -47,7 +50,7 @@ def salvage(text, k, q):
     """
     for match in re.finditer(f'"q{k}"' + _VALUE, text):
         value = json.loads(match.group(1))
-        if baseline.check(json.dumps({f"q{k}": value}), {"x": q})["hallucinated"] == []:
+        if baseline.check(json.dumps({"q1": value}), {"x": q})["hallucinated"] == []:  # alone, q is key q1
             return _label(q, value)
     return None
 
@@ -75,14 +78,14 @@ def first_token_plan(tokenizer, questions):
     A question with one label gets no plan (it scores 0.0, as in the engine).
     """
     plan = {}
-    for k, (qid, q) in enumerate(questions.items(), 1):
+    for qid, q in questions.items():
         cands = [encode(tokenizer, c) for c in sch.candidates(q)]
         if len(cands) == 1:
             continue
         shared, shortest = 0, min(map(len, cands))
         while shared < shortest - 1 and len({c[shared] for c in cands}) == 1:
             shared += 1
-        plan[qid] = (encode(tokenizer, sch.suffix(k)) + cands[0][:shared], [c[shared] for c in cands])
+        plan[qid] = (encode(tokenizer, sch.SUFFIX) + cands[0][:shared], [c[shared] for c in cands])
     return plan
 
 
@@ -107,51 +110,36 @@ def first_token(engine, state, questions):
     plan = first_token_plan(tokenizer, questions)
     results = {qid: {"scores": {sch.labels(q)[0]: 0.0}} for qid, q in questions.items() if qid not in plan}
     if plan:
-        prefix = prefix_ids(tokenizer, state, questions)
-        cache = _prefill(model, prefix)
+        cache = _prefill(model, shared_ids(tokenizer, state))
         for qid, (suffix, first) in plan.items():
-            logits = model(input_ids=torch.tensor([suffix], device=model.device), past_key_values=cache,
+            ids = branch_ids(tokenizer, questions[qid]) + suffix  # the question alone, as in the engine
+            logits = model(input_ids=torch.tensor([ids], device=model.device), past_key_values=cache,
                            use_cache=True, logits_to_keep=1).logits[0, -1]
             logp = logits.float().log_softmax(-1)[torch.tensor(first, device=model.device)].tolist()
             results[qid] = {"scores": dict(zip(sch.labels(questions[qid]), logp))}
-            cache.crop(-len(suffix))  # back to the prefix for the next question
+            cache.crop(-len(ids))  # back to the shared part for the next question
     return {qid: results[qid] for qid in questions}
 
 
-_SLOT = "\x00bench-user\x00"
-
-
-def questions_first_ids(tokenizer, state, questions):
-    """The scorer's prompt (SPEC 3.1) with the questions block moved before the state."""
-    user = sch.render_user(state, questions)
-    state_text = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False, indent=2)
-    head, tail = f"State:\n{state_text}\n\nQuestions:\n", f"\n\n{sch.ANSWER_RULES}"
-    if not (user.startswith(head) and user.endswith(tail)):
-        raise ValueError("the user message is not laid out as SPEC 3.1 says (state, then questions)")
-    blocks = user[len(head):-len(tail)]
-    moved = f"Questions:\n{blocks}\n\nState:\n{state_text}\n\n{sch.ANSWER_RULES}"
-    messages = [{"role": "system", "content": sch.SYSTEM_PROMPT}, {"role": "user", "content": _SLOT}]
-    head, end = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True, enable_thinking=False).split(_SLOT)
-    return (tokenizer.encode(head, add_special_tokens=False) + encode(tokenizer, moved)
-            + tokenizer.encode(end, add_special_tokens=False))
+def questions_first_ids(tokenizer, state, q):
+    """The engine's prompt for one question (SPEC 3.1) with the question moved before the state."""
+    head, tail = template_ids(tokenizer)
+    user = f"{sch.branch_text(q)}\n\n{sch.shared_text(state)[:-2]}"  # without the blank line that ends the state
+    return head + encode(tokenizer, user) + tail
 
 
 @torch.inference_mode()
 def questions_first(engine, state, questions):
     sch.validate(state, questions)
     tokenizer, model = engine.tokenizer, engine.model
-    prefix = questions_first_ids(tokenizer, state, questions)
-    cache = None
+    suffix = encode(tokenizer, sch.SUFFIX)
     results = {}
-    for k, (qid, q) in enumerate(questions.items(), 1):
+    for qid, q in questions.items():
         labels = sch.labels(q)
         if len(labels) == 1:
             results[qid] = {"scores": {labels[0]: 0.0}}
             continue
-        if cache is None:
-            cache = _prefill(model, prefix)
-        suffix = encode(tokenizer, sch.suffix(k))
+        cache = _prefill(model, questions_first_ids(tokenizer, state, q))
         scores = {}
         for label, cand in zip(labels, sch.candidates(q)):
             c = encode(tokenizer, cand)

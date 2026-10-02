@@ -6,16 +6,14 @@ TYPES = ("noul", "choice", "score")
 MAX_OPTIONS = 255
 MAX_LEVELS = 10
 
+# All of the answer rule there is, read once (SPEC 3.1). Measured 2026-10-01 on three models: the
+# full rule after every question cost 57 tokens a question, lowered accuracy on the two small
+# models and was within noise on Qwen3-4B-Instruct-2507; an example answer and the choice and
+# score sentences here cost that model 1.6 points on Banking77 (77 options); without the yes/no
+# sentence Qwen3-1.7B lost 5 points on SST-2.
 SYSTEM_PROMPT = (
     "You read a state and answer questions about it. You answer one question per reply, "
-    "as a JSON object that holds only that question's key."
-)
-
-ANSWER_RULES = (
-    'Answer one question per reply as a JSON object with only that question\'s key, '
-    'for example {"q1": true}. A yes/no question takes true or false. A choice question '
-    "takes one option name as a JSON string, exactly as written. A score question takes "
-    "one level number."
+    "as a JSON object that holds only that question's key. A yes/no question takes true or false."
 )
 
 
@@ -97,11 +95,30 @@ def _block(k, q):
     return "\n".join(lines)
 
 
-def render_user(state, questions, rules=ANSWER_RULES):
-    """The user message of SPEC 3.1. Questions are numbered q1, q2, ... in request order."""
-    state_text = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False, indent=2)
+def state_text(state):
+    """A string state verbatim; an object or an array as indented JSON."""
+    return state if isinstance(state, str) else json.dumps(state, ensure_ascii=False, indent=2)
+
+
+def shared_text(state):
+    """The start of the user message, which every question of a call shares (SPEC 3.1)."""
+    return f"State:\n{state_text(state)}\n\n"
+
+
+def branch_text(q):
+    """The rest of the user message in one question's private branch: the question, alone under
+    the key q1 (SPEC 3.1)."""
+    return f"Question:\n{_block(1, q)}"
+
+
+def render_user(state, questions, rules):
+    """One user message holding every question, numbered q1, q2, ... in request order.
+
+    This is the normal-generation baseline's prompt (SPEC 10.2); the scorer never puts two
+    questions in one prompt (SPEC 3.1).
+    """
     blocks = "\n\n".join(_block(k, q) for k, q in enumerate(questions.values(), 1))
-    return f"State:\n{state_text}\n\nQuestions:\n{blocks}\n\n{rules}"
+    return f"State:\n{state_text(state)}\n\nQuestions:\n{blocks}\n\n{rules}"
 
 
 def labels(q):
@@ -113,9 +130,8 @@ def labels(q):
     return [str(i) for i in range(len(q["criteria"]))]
 
 
-def suffix(k):
-    """Text shared by all labels of question k (1-based): the model starts writing {"qk": ..."""
-    return f'{{"q{k}":'
+# Text shared by all labels of a question: the model starts writing {"q1": ... (SPEC 3.2)
+SUFFIX = '{"q1":'
 
 
 def candidates(q):

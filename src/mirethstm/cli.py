@@ -20,8 +20,8 @@ def _parser():
                         help=f"Hugging Face model id (default {DEFAULT_MODEL}); ids off the approved list are unvetted")
     decide.add_argument("--temperature", type=float, help="softmax temperature (default: the model's shipped value, else 1.0)")
     decide.add_argument("--device", help='"cuda" or "cpu" (default: cuda when available)')
-    decide.add_argument("--batch-tokens", type=int, default=2048,
-                        help="tree nodes per scoring pass; the first pass also reads the prompt (default 2048)")
+    decide.add_argument("--batch-tokens", type=int, default=4096,
+                        help="tree nodes per scoring pass; the first pass also reads the prompt (default 4096)")
     decide.add_argument("--log", help="append the JSONL events of this call to this file")
     decide.add_argument("--state-json", action="store_true", help="parse stdin as JSON instead of a plain string")
     decide.add_argument("--no-tarnlight", action="store_true", help="do not feed Tarnlight's drop folder")

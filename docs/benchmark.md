@@ -1,237 +1,238 @@
-# MirethSTM1 benchmark: full
+# MirethSTM1 benchmark: v2
 
-Generated 2026-10-01 17:06 UTC by `python -m bench.report` from bench/out/full/ (per-sample JSONL). Models: Qwen/Qwen2.5-1.5B-Instruct, Qwen/Qwen3-4B-Instruct-2507, Qwen/Qwen3-1.7B, HuggingFaceTB/SmolLM3-3B, Qwen/Qwen3-0.6B.
+Generated 2026-10-02 15:32 UTC by `python -m bench.report` from bench/out/v2/ (per-sample JSONL). Models: Qwen/Qwen2.5-1.5B-Instruct, Qwen/Qwen3-4B-Instruct-2507, Qwen/Qwen3-1.7B, HuggingFaceTB/SmolLM3-3B, Qwen/Qwen3-0.6B.
 
-Accuracy runs: seed 0, bf16 on one RTX 5070, torch 2.11.0+cu128, transformers 5.18.0. Samples are stratified by class; texts longer than 2000 characters are cut at a word boundary (only Yelp).
+Accuracy runs: seed 0; NVIDIA GeForce RTX 5070, torch 2.11.0+cu128, transformers 5.18.0. Samples are stratified by class, and a smaller sample is a subset of a larger one (same seed). Texts longer than 2000 characters are cut at a word boundary (only Yelp).
 
-- Qwen2.5-1.5B-Instruct, Qwen3-4B-Instruct-2507, Qwen3-1.7B: the scoring arms on 1000 evaluation rows per dataset (SST-2: the whole 872-row validation split) and 500 calibration rows; normal generation on 300 evaluation rows.
-- SmolLM3-3B, Qwen3-0.6B: the scoring arms on 500 evaluation and 300 calibration rows; normal generation on 100. With the same seed these rows are subsets of the larger runs' rows, so all five models share 500 evaluation rows per dataset.
-- Qwen2.5-1.5B-Instruct, questions before the state: 200 rows of AG News, SST-2 and Yelp.
-- Latency: 10 warmup runs, then 30 timed runs per field count (10 for SmolLM3-3B and Qwen3-0.6B) and 20 per console scenario.
+- Qwen/Qwen2.5-1.5B-Instruct: bf16, 2026-10-02; scoring arms on 1000 (sst2: 872, sst2_choice: 872) evaluation rows per dataset and 500 calibration rows; normal generation on 300 evaluation rows (files copied in from an earlier run: meta.json records no run of that arm); latency over 30 timed runs per field count and 20 timed runs per scenario.
+- Qwen/Qwen3-4B-Instruct-2507: bf16, 2026-10-02; scoring arms on 1000 (sst2: 872, sst2_choice: 872) evaluation rows per dataset and 500 calibration rows; normal generation on 300 evaluation rows (files copied in from an earlier run: meta.json records no run of that arm); latency over 30 timed runs per field count and 20 timed runs per scenario.
+- Qwen/Qwen3-1.7B: bf16, 2026-10-02; scoring arms on 500 evaluation rows per dataset and 300 calibration rows; normal generation on 300 evaluation rows (files copied in from an earlier run: meta.json records no run of that arm); latency over 10 timed runs per field count and 20 timed runs per scenario.
+- HuggingFaceTB/SmolLM3-3B: bf16, 2026-10-02; scoring arms on 500 evaluation rows per dataset and 300 calibration rows; normal generation on 100 evaluation rows (files copied in from an earlier run: meta.json records no run of that arm); latency over 10 timed runs per field count and 20 timed runs per scenario.
+- Qwen/Qwen3-0.6B: bf16, 2026-10-02; scoring arms on 500 evaluation rows per dataset and 300 calibration rows; normal generation on 100 evaluation rows (files copied in from an earlier run: meta.json records no run of that arm); latency over 10 timed runs per field count and 20 timed runs per scenario.
 
-<!-- summary:start -->
 ## Summary across models
 
-Means over the five datasets (AG News, Banking77, SST-2 yes/no, SST-2 choice, Yelp), each dataset weighted equally, evaluation split. MirethSTM1 and the first-token arm ran the same rows (each model's full evaluation rows, listed above). Normal generation ran fewer rows (300, or 100 for SmolLM3-3B and Qwen3-0.6B); the column next to it scores MirethSTM1 on exactly those rows. Normal generation counts an invalid, hallucinated or missing answer as wrong and is strict about types: a quoted "true" is not a boolean, which alone puts Qwen3-4B-Instruct-2507 at 0.250 and Qwen3-1.7B at 0.033 on SST-2 yes/no. ECE-15 is the mean of the per-dataset values. The shipped T is the pooled T fitted on the model's calibration rows (`mirethstm.calibration.DEFAULT_TEMPERATURES`).
+Means over the datasets (ag_news, banking77, sst2, sst2_choice, yelp), each weighted equally, evaluation split. Rows: the largest per-dataset row count of the scoring arms and of normal generation; models run on different row counts are compared on their shared rows in the second table. MirethSTM1 on the generation rows scores MirethSTM1 on exactly the rows normal generation ran. Normal generation counts an invalid, hallucinated or missing answer as wrong and is strict about types (a quoted "true" is not a boolean). ECE-15 is the mean of the per-dataset values; at the pooled T it is computed at T rounded to three decimals, the value that ships in `mirethstm.calibration.DEFAULT_TEMPERATURES`.
 
-| Model | MirethSTM1 accuracy | First-token accuracy | Normal generation accuracy (valid answers) | MirethSTM1 on the normal-generation rows | MirethSTM1 ECE-15 at T = 1 | MirethSTM1 ECE-15 at shipped T | Shipped T | First token ECE-15 at T = 1 / at its pooled T |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | 0.713 | 0.670 | 0.555 (0.850) | 0.705 | 0.164 | 0.094 | 2.285 | 0.133 / 0.089 |
-| Qwen/Qwen3-4B-Instruct-2507 | 0.752 | 0.692 | 0.611 (0.849) | 0.747 | 0.238 | 0.119 | 8.036 | 0.207 / 0.106 |
-| Qwen/Qwen3-1.7B | 0.696 | 0.660 | 0.515 (0.758) | 0.696 | 0.268 | 0.091 | 6.750 | 0.219 / 0.096 |
-| HuggingFaceTB/SmolLM3-3B | 0.672 | 0.657 | 0.572 (0.846) | 0.686 | 0.195 | 0.076 | 2.677 | 0.143 / 0.076 |
-| Qwen/Qwen3-0.6B | 0.581 | 0.540 | 0.008 (0.008) | 0.576 | 0.291 | 0.127 | 3.830 | 0.250 / 0.118 |
-
-Accuracy on the 500 evaluation rows per dataset that all five models ran, MirethSTM1 / first token:
-
-| Model | AG News | Banking77 | SST-2 yes/no | SST-2 choice | Yelp | Mean |
-| --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | 0.826 / 0.826 | 0.550 / 0.326 | 0.884 / 0.882 | 0.920 / 0.922 | 0.374 / 0.378 | 0.711 / 0.667 |
-| Qwen/Qwen3-4B-Instruct-2507 | 0.868 / 0.868 | 0.684 / 0.388 | 0.882 / 0.882 | 0.894 / 0.892 | 0.416 / 0.410 | 0.749 / 0.688 |
-| Qwen/Qwen3-1.7B | 0.820 / 0.818 | 0.494 / 0.326 | 0.850 / 0.848 | 0.906 / 0.906 | 0.416 / 0.412 | 0.697 / 0.662 |
-| HuggingFaceTB/SmolLM3-3B | 0.800 / 0.802 | 0.266 / 0.168 | 0.856 / 0.866 | 0.898 / 0.900 | 0.538 / 0.548 | 0.672 / 0.657 |
-| Qwen/Qwen3-0.6B | 0.724 / 0.728 | 0.478 / 0.286 | 0.530 / 0.526 | 0.822 / 0.822 | 0.350 / 0.338 | 0.581 / 0.540 |
-
-MirethSTM1 p50 latency in ms (warm, batch 1, bf16, RTX 5070; full tables in Latency below). Peak memory: the largest `torch.cuda.max_memory_allocated` of any MirethSTM1 run of the model, in MiB.
-
-| Model | 1 field | 5 fields | 10 fields | 20 fields | 28 fields, support | 28 fields, security review | 20 fields with scores, incident | 255-option router | Peak memory MB |
+| Model | Rows: scoring / generation | MirethSTM1 accuracy | First-token accuracy | Normal generation accuracy (valid answers) | MirethSTM1 on the generation rows | MirethSTM1 ECE-15 at T = 1 | MirethSTM1 ECE-15 at pooled T | Pooled T | First token ECE-15 at T = 1 / at its pooled T |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | 37.2 | 36.5 | 37.1 | 50.6 | 98.1 | 99.3 | 83.3 | 220 | 3545 |
-| Qwen/Qwen3-4B-Instruct-2507 | 58.7 | 72.0 | 83.5 | 121 | 274 | 279 | 223 | 637 | 8331 |
-| Qwen/Qwen3-1.7B | 48.5 | 44.7 | 44.0 | 52.6 | 110 | 113 | 95.3 | 258 | 3883 |
-| HuggingFaceTB/SmolLM3-3B | 48.4 | 52.5 | 64.9 | 83.8 | 184 | 186 | 154 | 409 | 6487 |
-| Qwen/Qwen3-0.6B | 45.5 | 45.7 | 44.0 | 44.1 | 64.6 | 66.4 | 54.8 | 163 | 1733 |
+| Qwen/Qwen2.5-1.5B-Instruct | 1000 / 300 | 0.728 | 0.694 | 0.555 (0.850) | 0.722 | 0.148 | 0.109 | 2.112 | 0.119 / 0.108 |
+| Qwen/Qwen3-4B-Instruct-2507 | 1000 / 300 | 0.760 | 0.702 | 0.611 (0.849) | 0.747 | 0.230 | 0.117 | 7.930 | 0.200 / 0.112 |
+| Qwen/Qwen3-1.7B | 500 / 300 | 0.726 | 0.690 | 0.515 (0.758) | 0.727 | 0.238 | 0.097 | 7.007 | 0.195 / 0.097 |
+| HuggingFaceTB/SmolLM3-3B | 500 / 100 | 0.688 | 0.671 | 0.572 (0.846) | 0.702 | 0.190 | 0.061 | 2.702 | 0.147 / 0.060 |
+| Qwen/Qwen3-0.6B | 500 / 100 | 0.575 | 0.532 | 0.008 (0.008) | 0.586 | 0.339 | 0.137 | 4.639 | 0.296 / 0.135 |
 
-<!-- summary:end -->
+Accuracy on the evaluation rows that every model ran (ag_news: 500, banking77: 500, sst2: 500, sst2_choice: 500, yelp: 500), MirethSTM1 / first token:
+
+| Model | ag_news | banking77 | sst2 | sst2_choice | yelp | Mean |
+| --- | --- | --- | --- | --- | --- | --- |
+| Qwen/Qwen2.5-1.5B-Instruct | 0.840 / 0.834 | 0.498 / 0.326 | 0.902 / 0.908 | 0.920 / 0.920 | 0.484 / 0.482 | 0.729 / 0.694 |
+| Qwen/Qwen3-4B-Instruct-2507 | 0.874 / 0.874 | 0.672 / 0.388 | 0.872 / 0.874 | 0.900 / 0.898 | 0.438 / 0.436 | 0.751 / 0.694 |
+| Qwen/Qwen3-1.7B | 0.810 / 0.806 | 0.500 / 0.326 | 0.876 / 0.880 | 0.900 / 0.898 | 0.546 / 0.542 | 0.726 / 0.690 |
+| HuggingFaceTB/SmolLM3-3B | 0.838 / 0.840 | 0.300 / 0.210 | 0.818 / 0.820 | 0.898 / 0.898 | 0.584 / 0.588 | 0.688 / 0.671 |
+| Qwen/Qwen3-0.6B | 0.746 / 0.740 | 0.464 / 0.270 | 0.542 / 0.540 | 0.848 / 0.844 | 0.276 / 0.268 | 0.575 / 0.532 |
+
+MirethSTM1 p50 latency in ms (warm, batch 1; full tables in Latency below). Peak memory: the largest `torch.cuda.max_memory_allocated` of any MirethSTM1 run of the model.
+
+| Model | 1 field | 5 fields | 10 fields | 20 fields | Support ticket triage (28 fields) | Code change security review (28 fields) | Incident triage with scores (20 fields) | Request router, 255 queues (4 fields) | Peak memory MiB |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Qwen/Qwen2.5-1.5B-Instruct | 37.2 | 35.7 | 34.9 | 48.1 | 96.4 | 97.7 | 81.4 | 209 | 3550 |
+| Qwen/Qwen3-4B-Instruct-2507 | 54.6 | 67.4 | 76.0 | 114 | 271 | 279 | 211 | 615 | 8336 |
+| Qwen/Qwen3-1.7B | 44.8 | 43.5 | 42.8 | 52.7 | 111 | 132 | 95.2 | 248 | 3889 |
+| HuggingFaceTB/SmolLM3-3B | 41.5 | 51.6 | 64.5 | 93.2 | 213 | 215 | 167 | 408 | 6493 |
+| Qwen/Qwen3-0.6B | 43.8 | 42.9 | 42.9 | 42.8 | 63.7 | 76.2 | 53.4 | 156 | 1739 |
+
+Normal generation p50 latency in ms on the same settings: the same loaded model writing the answers as one JSON object with Hugging Face `generate` (greedy). Tokens per second: generated tokens over wall time, summed over every timed run (the prompt pass included). Every speedup in this report is against this decoding speed.
+
+| Model | 1 field | 5 fields | 10 fields | 20 fields | Support ticket triage (28 fields) | Code change security review (28 fields) | Incident triage with scores (20 fields) | Request router, 255 queues (4 fields) | Generated tokens per second |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Qwen/Qwen2.5-1.5B-Instruct | 310 | 1269 | 2548 | 5436 | 8214 | 8796 | 6122 | 1461 | 24.0 |
+| Qwen/Qwen3-4B-Instruct-2507 | 486 | 2056 | 3915 | 8651 | 16863 | 16990 | 11175 | 2698 | 14.4 |
+| Qwen/Qwen3-1.7B | 712 | 1528 | 3016 | 6449 | 10247 | 11150 | 7613 | 1659 | 19.4 |
+| HuggingFaceTB/SmolLM3-3B | 372 | 1551 | 3069 | 6135 | 11677 | 12914 | 8709 | 2430 | 18.3 |
+| Qwen/Qwen3-0.6B | 1049 | 1988 | 3979 | 7601 | 13797 | 10894 | 8693 | 2018 | 19.9 |
 
 ## Accuracy on the evaluation split
 
-Raw scores (T = 1). Accuracy and macro-F1 do not depend on T (the argmax does not move), so they are given once. Normal generation has no probabilities: an invalid, hallucinated or missing answer counts wrong, and NLL, Brier and ECE do not apply. Salvaged accuracy (secondary): the first allowed value written for the question's key anywhere in the output, even when the JSON is invalid or cut off. Brackets: bootstrap 95% CI (1000 resamples of the evaluation rows). ECE is biased upward on small samples, and more so on resamples (they repeat rows), so its interval can sit above the point estimate.
+Raw scores (T = 1). Accuracy and macro-F1 do not depend on T (the argmax does not move), so they are given once. Normal generation has no probabilities: an invalid, hallucinated or missing answer counts wrong, and NLL, Brier and ECE do not apply. Salvaged accuracy (secondary): the first allowed value written for the question's key anywhere in the output, even when the JSON is invalid or cut off. Brackets: bootstrap 95% CI (1000 resamples of the evaluation rows). ECE is biased upward on small samples, and more so on resamples (they repeat rows), so its interval can sit above the point estimate. NLL clips the gold label's probability at 1e-12 (27.6 per row), which lowers the T = 1 values of the Qwen3 models.
 
 ### ag_news (fancyzhx/ag_news test, 4 labels, n = 1000)
 
 | Model | Arm | n | Accuracy | Macro-F1 | NLL | Brier | ECE (15 bins) | ECE (10 bins) | Valid answers | Salvaged accuracy | Hit token cap | Median ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 1000 | 0.840 [0.817, 0.861] | 0.840 [0.817, 0.861] | 0.951 [0.802, 1.123] | 0.284 [0.247, 0.326] | 0.125 [0.107, 0.149] | 0.125 | n/a | n/a | n/a | 36.8 |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 1000 | 0.838 [0.815, 0.860] | 0.838 [0.815, 0.859] | 0.954 [0.805, 1.127] | 0.285 [0.248, 0.327] | 0.127 [0.109, 0.150] | 0.126 | n/a | n/a | n/a | 84.0 |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 1000 | 0.846 [0.823, 0.868] | 0.846 [0.823, 0.867] | 0.832 [0.694, 0.991] | 0.268 [0.231, 0.309] | 0.116 [0.097, 0.139] | 0.111 | n/a | n/a | n/a | 35.9 |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 1000 | 0.845 [0.822, 0.867] | 0.845 [0.823, 0.866] | 0.831 [0.694, 0.991] | 0.268 [0.231, 0.309] | 0.112 [0.095, 0.137] | 0.111 | n/a | n/a | n/a | 80.2 |
 | Qwen/Qwen2.5-1.5B-Instruct | Normal generation | 300 | 0.787 [0.740, 0.830] | 0.794 [0.750, 0.837] | n/a | n/a | n/a | n/a | 0.973 | 0.787 | 0.023 | 386 |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1, questions before state | 200 | 0.485 [0.415, 0.550] | 0.475 [0.397, 0.537] | 1.280 [1.116, 1.466] | 0.699 [0.623, 0.786] | 0.198 [0.166, 0.291] | 0.197 | n/a | n/a | n/a | 201 |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 1000 | 0.883 [0.862, 0.902] | 0.883 [0.863, 0.902] | 2.165 [1.767, 2.599] | 0.221 [0.184, 0.261] | 0.112 [0.094, 0.133] | 0.112 | n/a | n/a | n/a | 59.5 |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 1000 | 0.883 [0.862, 0.903] | 0.883 [0.863, 0.903] | 2.172 [1.775, 2.605] | 0.222 [0.184, 0.262] | 0.112 [0.093, 0.132] | 0.112 | n/a | n/a | n/a | 133 |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 1000 | 0.890 [0.870, 0.908] | 0.890 [0.870, 0.908] | 2.438 [2.000, 2.918] | 0.220 [0.183, 0.260] | 0.110 [0.092, 0.130] | 0.110 | n/a | n/a | n/a | 54.3 |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 1000 | 0.890 [0.870, 0.908] | 0.890 [0.870, 0.908] | 2.442 [2.012, 2.920] | 0.220 [0.183, 0.260] | 0.110 [0.092, 0.131] | 0.110 | n/a | n/a | n/a | 119 |
 | Qwen/Qwen3-4B-Instruct-2507 | Normal generation | 300 | 0.863 [0.827, 0.900] | 0.864 [0.825, 0.900] | n/a | n/a | n/a | n/a | 1.000 | 0.863 | 0.000 | 631 |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 1000 | 0.821 [0.796, 0.844] | 0.820 [0.795, 0.841] | 2.791 [2.340, 3.260] | 0.340 [0.297, 0.388] | 0.170 [0.148, 0.195] | 0.169 | n/a | n/a | n/a | 45.5 |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | 1000 | 0.821 [0.796, 0.843] | 0.820 [0.795, 0.841] | 2.789 [2.337, 3.266] | 0.341 [0.298, 0.389] | 0.169 [0.147, 0.194] | 0.169 | n/a | n/a | n/a | 100 |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 500 | 0.810 [0.778, 0.844] | 0.810 [0.777, 0.843] | 3.394 [2.648, 4.128] | 0.365 [0.299, 0.429] | 0.182 [0.150, 0.217] | 0.180 | n/a | n/a | n/a | 43.7 |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | 500 | 0.806 [0.772, 0.840] | 0.805 [0.773, 0.841] | 3.400 [2.673, 4.132] | 0.371 [0.303, 0.436] | 0.185 [0.153, 0.219] | 0.185 | n/a | n/a | n/a | 96.7 |
 | Qwen/Qwen3-1.7B | Normal generation | 300 | 0.760 [0.713, 0.810] | 0.798 [0.755, 0.843] | n/a | n/a | n/a | n/a | 0.903 | 0.847 | 0.333 | 950 |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.800 [0.764, 0.836] | 0.797 [0.760, 0.831] | 1.321 [1.029, 1.621] | 0.350 [0.289, 0.413] | 0.164 [0.133, 0.200] | 0.165 | n/a | n/a | n/a | 43.8 |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.802 [0.766, 0.836] | 0.799 [0.763, 0.833] | 1.322 [1.031, 1.628] | 0.350 [0.289, 0.411] | 0.161 [0.132, 0.197] | 0.160 | n/a | n/a | n/a | 101 |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.838 [0.806, 0.870] | 0.836 [0.802, 0.866] | 1.319 [0.966, 1.674] | 0.288 [0.233, 0.345] | 0.129 [0.105, 0.163] | 0.126 | n/a | n/a | n/a | 41.9 |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.840 [0.808, 0.872] | 0.838 [0.805, 0.869] | 1.242 [0.907, 1.581] | 0.282 [0.226, 0.337] | 0.124 [0.099, 0.158] | 0.122 | n/a | n/a | n/a | 99.2 |
 | HuggingFaceTB/SmolLM3-3B | Normal generation | 100 | 0.680 [0.590, 0.760] | 0.709 [0.616, 0.784] | n/a | n/a | n/a | n/a | 0.940 | 0.710 | 0.100 | 463 |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 0.724 [0.686, 0.760] | 0.715 [0.677, 0.752] | 2.479 [2.036, 2.929] | 0.502 [0.434, 0.571] | 0.241 [0.208, 0.279] | 0.236 | n/a | n/a | n/a | 45.8 |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 0.728 [0.690, 0.766] | 0.719 [0.681, 0.756] | 2.469 [2.035, 2.914] | 0.500 [0.432, 0.567] | 0.235 [0.206, 0.275] | 0.230 | n/a | n/a | n/a | 109 |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 0.746 [0.712, 0.784] | 0.737 [0.701, 0.774] | 2.684 [2.226, 3.170] | 0.494 [0.421, 0.563] | 0.242 [0.209, 0.281] | 0.242 | n/a | n/a | n/a | 44.4 |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 0.740 [0.702, 0.778] | 0.731 [0.695, 0.767] | 2.702 [2.248, 3.187] | 0.494 [0.423, 0.562] | 0.245 [0.210, 0.282] | 0.243 | n/a | n/a | n/a | 96.9 |
 | Qwen/Qwen3-0.6B | Normal generation | 100 | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] | n/a | n/a | n/a | n/a | 0.000 | 0.430 | 1.000 | 1220 |
 
 ### banking77 (mteb/banking77 test, 77 labels, n = 1000)
 
 | Model | Arm | n | Accuracy | Macro-F1 | NLL | Brier | ECE (15 bins) | ECE (10 bins) | Valid answers | Salvaged accuracy | Hit token cap | Median ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 1000 | 0.545 [0.513, 0.576] | 0.524 [0.491, 0.543] | 2.723 [2.481, 2.951] | 0.696 [0.648, 0.744] | 0.235 [0.209, 0.267] | 0.235 | n/a | n/a | n/a | 80.8 |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 1000 | 0.323 [0.293, 0.354] | 0.267 [0.246, 0.281] | 3.029 [2.825, 3.232] | 0.805 [0.773, 0.836] | 0.095 [0.081, 0.125] | 0.099 | n/a | n/a | n/a | 109 |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 1000 | 0.494 [0.461, 0.526] | 0.478 [0.445, 0.498] | 2.805 [2.571, 3.023] | 0.740 [0.697, 0.784] | 0.224 [0.197, 0.255] | 0.224 | n/a | n/a | n/a | 78.9 |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 1000 | 0.313 [0.284, 0.342] | 0.255 [0.234, 0.269] | 3.024 [2.838, 3.207] | 0.830 [0.804, 0.858] | 0.077 [0.066, 0.108] | 0.080 | n/a | n/a | n/a | 97.8 |
 | Qwen/Qwen2.5-1.5B-Instruct | Normal generation | 300 | 0.157 [0.117, 0.200] | 0.189 [0.128, 0.211] | n/a | n/a | n/a | n/a | 0.367 | 0.157 | 0.003 | 551 |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 1000 | 0.670 [0.642, 0.697] | 0.657 [0.624, 0.674] | 6.581 [5.922, 7.240] | 0.637 [0.583, 0.692] | 0.309 [0.282, 0.337] | 0.309 | n/a | n/a | n/a | 200 |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 1000 | 0.380 [0.351, 0.412] | 0.319 [0.299, 0.333] | 6.512 [5.927, 7.119] | 0.786 [0.750, 0.824] | 0.154 [0.131, 0.180] | 0.152 | n/a | n/a | n/a | 264 |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 1000 | 0.670 [0.640, 0.699] | 0.658 [0.623, 0.675] | 6.562 [5.894, 7.246] | 0.634 [0.579, 0.690] | 0.310 [0.282, 0.337] | 0.310 | n/a | n/a | n/a | 198 |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 1000 | 0.380 [0.350, 0.412] | 0.322 [0.301, 0.335] | 6.539 [5.929, 7.142] | 0.781 [0.743, 0.820] | 0.153 [0.130, 0.181] | 0.152 | n/a | n/a | n/a | 192 |
 | Qwen/Qwen3-4B-Instruct-2507 | Normal generation | 300 | 0.660 [0.603, 0.720] | 0.647 [0.568, 0.672] | n/a | n/a | n/a | n/a | 0.987 | 0.660 | 0.000 | 925 |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 1000 | 0.505 [0.475, 0.535] | 0.506 [0.469, 0.524] | 7.657 [7.016, 8.256] | 0.893 [0.837, 0.949] | 0.429 [0.401, 0.460] | 0.429 | n/a | n/a | n/a | 86.1 |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | 1000 | 0.327 [0.297, 0.354] | 0.280 [0.257, 0.293] | 6.679 [6.133, 7.249] | 0.863 [0.827, 0.898] | 0.179 [0.159, 0.208] | 0.181 | n/a | n/a | n/a | 128 |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 500 | 0.500 [0.454, 0.542] | 0.488 [0.430, 0.509] | 8.298 [7.380, 9.267] | 0.926 [0.848, 1.011] | 0.448 [0.409, 0.494] | 0.447 | n/a | n/a | n/a | 84.1 |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | 500 | 0.326 [0.284, 0.364] | 0.273 [0.238, 0.289] | 7.220 [6.435, 8.117] | 0.884 [0.833, 0.939] | 0.201 [0.175, 0.245] | 0.195 | n/a | n/a | n/a | 108 |
 | Qwen/Qwen3-1.7B | Normal generation | 300 | 0.537 [0.480, 0.597] | 0.531 [0.448, 0.551] | n/a | n/a | n/a | n/a | 0.997 | 0.537 | 0.000 | 689 |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.266 [0.228, 0.306] | 0.226 [0.183, 0.247] | 4.684 [4.323, 5.071] | 1.035 [0.978, 1.094] | 0.383 [0.348, 0.421] | 0.383 | n/a | n/a | n/a | 147 |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.168 [0.134, 0.202] | 0.124 [0.095, 0.139] | 4.653 [4.348, 4.985] | 0.945 [0.915, 0.978] | 0.131 [0.107, 0.161] | 0.129 | n/a | n/a | n/a | 235 |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.300 [0.258, 0.340] | 0.292 [0.241, 0.311] | 4.690 [4.315, 5.061] | 1.003 [0.947, 1.062] | 0.359 [0.323, 0.398] | 0.359 | n/a | n/a | n/a | 145 |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.210 [0.174, 0.246] | 0.176 [0.142, 0.193] | 4.320 [4.030, 4.641] | 0.934 [0.896, 0.971] | 0.157 [0.126, 0.192] | 0.157 | n/a | n/a | n/a | 173 |
 | HuggingFaceTB/SmolLM3-3B | Normal generation | 100 | 0.340 [0.250, 0.430] | 0.245 [0.179, 0.311] | n/a | n/a | n/a | n/a | 0.910 | 0.380 | 0.090 | 1049 |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 0.478 [0.434, 0.526] | 0.463 [0.406, 0.486] | 4.825 [4.264, 5.367] | 0.865 [0.788, 0.939] | 0.388 [0.347, 0.431] | 0.388 | n/a | n/a | n/a | 51.6 |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 0.286 [0.248, 0.328] | 0.235 [0.201, 0.255] | 4.621 [4.125, 5.131] | 0.863 [0.818, 0.912] | 0.165 [0.143, 0.205] | 0.165 | n/a | n/a | n/a | 116 |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 0.464 [0.420, 0.508] | 0.464 [0.408, 0.485] | 5.571 [4.914, 6.206] | 0.913 [0.833, 0.989] | 0.414 [0.369, 0.455] | 0.414 | n/a | n/a | n/a | 48.6 |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 0.270 [0.232, 0.308] | 0.231 [0.198, 0.249] | 5.265 [4.717, 5.829] | 0.904 [0.856, 0.951] | 0.190 [0.159, 0.227] | 0.190 | n/a | n/a | n/a | 100 |
 | Qwen/Qwen3-0.6B | Normal generation | 100 | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] | n/a | n/a | n/a | n/a | 0.000 | 0.210 | 1.000 | 1564 |
 
 ### sst2 (stanfordnlp/sst2 validation, 2 labels, n = 872)
 
 | Model | Arm | n | Accuracy | Macro-F1 | NLL | Brier | ECE (15 bins) | ECE (10 bins) | Valid answers | Salvaged accuracy | Hit token cap | Median ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 872 | 0.884 [0.862, 0.904] | 0.884 [0.862, 0.903] | 0.331 [0.281, 0.388] | 0.188 [0.160, 0.220] | 0.044 [0.034, 0.068] | 0.044 | n/a | n/a | n/a | 38.4 |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 872 | 0.882 [0.860, 0.901] | 0.881 [0.860, 0.900] | 0.330 [0.281, 0.387] | 0.188 [0.160, 0.219] | 0.041 [0.032, 0.066] | 0.042 | n/a | n/a | n/a | 85.4 |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 872 | 0.904 [0.882, 0.923] | 0.904 [0.882, 0.923] | 0.286 [0.259, 0.315] | 0.163 [0.143, 0.186] | 0.070 [0.057, 0.089] | 0.070 | n/a | n/a | n/a | 36.0 |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 872 | 0.909 [0.889, 0.928] | 0.909 [0.889, 0.927] | 0.287 [0.261, 0.314] | 0.163 [0.143, 0.184] | 0.082 [0.065, 0.100] | 0.082 | n/a | n/a | n/a | 79.9 |
 | Qwen/Qwen2.5-1.5B-Instruct | Normal generation | 300 | 0.653 [0.597, 0.703] | 0.608 [0.548, 0.665] | n/a | n/a | n/a | n/a | 1.000 | 0.653 | 0.000 | 300 |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1, questions before state | 200 | 0.820 [0.770, 0.865] | 0.815 [0.761, 0.863] | 0.402 [0.319, 0.500] | 0.251 [0.198, 0.313] | 0.058 [0.043, 0.117] | 0.066 | n/a | n/a | n/a | 130 |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 872 | 0.899 [0.877, 0.917] | 0.899 [0.877, 0.917] | 1.661 [1.344, 2.022] | 0.201 [0.164, 0.244] | 0.101 [0.083, 0.122] | 0.101 | n/a | n/a | n/a | 57.3 |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 872 | 0.899 [0.877, 0.917] | 0.899 [0.877, 0.917] | 1.658 [1.339, 2.028] | 0.201 [0.164, 0.243] | 0.101 [0.083, 0.122] | 0.101 | n/a | n/a | n/a | 128 |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 872 | 0.893 [0.873, 0.913] | 0.893 [0.872, 0.913] | 1.273 [1.026, 1.552] | 0.207 [0.166, 0.248] | 0.103 [0.084, 0.124] | 0.103 | n/a | n/a | n/a | 54.3 |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 872 | 0.896 [0.875, 0.915] | 0.895 [0.874, 0.915] | 1.257 [1.008, 1.533] | 0.203 [0.163, 0.244] | 0.101 [0.083, 0.123] | 0.100 | n/a | n/a | n/a | 119 |
 | Qwen/Qwen3-4B-Instruct-2507 | Normal generation | 300 | 0.250 [0.203, 0.300] | 0.318 [0.282, 0.350] | n/a | n/a | n/a | n/a | 0.287 | 0.250 | 0.000 | 555 |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 872 | 0.846 [0.823, 0.873] | 0.844 [0.820, 0.871] | 0.815 [0.652, 0.979] | 0.263 [0.218, 0.304] | 0.121 [0.099, 0.145] | 0.121 | n/a | n/a | n/a | 45.1 |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | 872 | 0.844 [0.820, 0.870] | 0.842 [0.818, 0.868] | 0.806 [0.650, 0.969] | 0.262 [0.218, 0.302] | 0.124 [0.102, 0.148] | 0.124 | n/a | n/a | n/a | 99.6 |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 500 | 0.876 [0.848, 0.904] | 0.876 [0.848, 0.904] | 0.467 [0.343, 0.586] | 0.205 [0.157, 0.253] | 0.070 [0.057, 0.107] | 0.074 | n/a | n/a | n/a | 44.0 |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | 500 | 0.880 [0.852, 0.908] | 0.880 [0.852, 0.908] | 0.467 [0.338, 0.588] | 0.203 [0.155, 0.249] | 0.083 [0.062, 0.114] | 0.076 | n/a | n/a | n/a | 96.5 |
 | Qwen/Qwen3-1.7B | Normal generation | 300 | 0.033 [0.017, 0.057] | 0.063 [0.031, 0.102] | n/a | n/a | n/a | n/a | 0.033 | 0.033 | 0.053 | 778 |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.856 [0.824, 0.888] | 0.854 [0.822, 0.886] | 0.369 [0.284, 0.453] | 0.208 [0.162, 0.255] | 0.082 [0.059, 0.114] | 0.082 | n/a | n/a | n/a | 43.3 |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.866 [0.834, 0.896] | 0.865 [0.834, 0.896] | 0.364 [0.280, 0.448] | 0.207 [0.160, 0.254] | 0.083 [0.058, 0.113] | 0.082 | n/a | n/a | n/a | 100 |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.818 [0.784, 0.852] | 0.813 [0.779, 0.846] | 0.662 [0.528, 0.804] | 0.312 [0.254, 0.373] | 0.144 [0.116, 0.179] | 0.145 | n/a | n/a | n/a | 44.2 |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.820 [0.786, 0.854] | 0.816 [0.782, 0.849] | 0.656 [0.524, 0.795] | 0.315 [0.257, 0.376] | 0.142 [0.114, 0.179] | 0.143 | n/a | n/a | n/a | 102 |
 | HuggingFaceTB/SmolLM3-3B | Normal generation | 100 | 0.480 [0.380, 0.580] | 0.625 [0.522, 0.715] | n/a | n/a | n/a | n/a | 0.530 | 0.660 | 0.200 | 473 |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 0.530 [0.484, 0.572] | 0.397 [0.360, 0.434] | 1.366 [1.230, 1.508] | 0.765 [0.695, 0.842] | 0.401 [0.362, 0.446] | 0.399 | n/a | n/a | n/a | 45.8 |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 0.526 [0.478, 0.568] | 0.389 [0.352, 0.425] | 1.354 [1.217, 1.497] | 0.764 [0.696, 0.838] | 0.403 [0.366, 0.448] | 0.403 | n/a | n/a | n/a | 100 |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 0.542 [0.496, 0.584] | 0.420 [0.383, 0.457] | 1.656 [1.469, 1.848] | 0.770 [0.699, 0.848] | 0.395 [0.358, 0.439] | 0.395 | n/a | n/a | n/a | 43.8 |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 0.540 [0.494, 0.582] | 0.417 [0.381, 0.453] | 1.666 [1.478, 1.859] | 0.769 [0.699, 0.849] | 0.398 [0.363, 0.445] | 0.398 | n/a | n/a | n/a | 96.9 |
 | Qwen/Qwen3-0.6B | Normal generation | 100 | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] | n/a | n/a | n/a | n/a | 0.000 | 0.000 | 1.000 | 1020 |
 
 ### sst2_choice (stanfordnlp/sst2 validation, 2 labels, n = 872)
 
 | Model | Arm | n | Accuracy | Macro-F1 | NLL | Brier | ECE (15 bins) | ECE (10 bins) | Valid answers | Salvaged accuracy | Hit token cap | Median ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 872 | 0.924 [0.906, 0.940] | 0.924 [0.906, 0.940] | 0.314 [0.243, 0.398] | 0.134 [0.106, 0.166] | 0.063 [0.049, 0.081] | 0.058 | n/a | n/a | n/a | 37.7 |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 872 | 0.925 [0.907, 0.942] | 0.925 [0.907, 0.941] | 0.315 [0.244, 0.400] | 0.134 [0.107, 0.167] | 0.060 [0.046, 0.077] | 0.058 | n/a | n/a | n/a | 85.7 |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 872 | 0.923 [0.905, 0.939] | 0.923 [0.905, 0.939] | 0.387 [0.296, 0.489] | 0.141 [0.111, 0.173] | 0.069 [0.054, 0.086] | 0.066 | n/a | n/a | n/a | 35.9 |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 872 | 0.924 [0.906, 0.940] | 0.924 [0.906, 0.940] | 0.382 [0.290, 0.485] | 0.140 [0.111, 0.172] | 0.068 [0.054, 0.086] | 0.067 | n/a | n/a | n/a | 79.7 |
 | Qwen/Qwen2.5-1.5B-Instruct | Normal generation | 300 | 0.903 [0.867, 0.937] | 0.903 [0.867, 0.936] | n/a | n/a | n/a | n/a | 1.000 | 0.903 | 0.000 | 348 |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 872 | 0.903 [0.883, 0.921] | 0.902 [0.883, 0.921] | 1.379 [1.078, 1.691] | 0.191 [0.155, 0.230] | 0.095 [0.077, 0.116] | 0.095 | n/a | n/a | n/a | 57.2 |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 872 | 0.900 [0.880, 0.919] | 0.900 [0.880, 0.919] | 1.380 [1.079, 1.692] | 0.191 [0.155, 0.229] | 0.096 [0.079, 0.116] | 0.096 | n/a | n/a | n/a | 130 |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 872 | 0.908 [0.888, 0.927] | 0.908 [0.887, 0.927] | 1.546 [1.218, 1.921] | 0.182 [0.146, 0.222] | 0.092 [0.074, 0.113] | 0.091 | n/a | n/a | n/a | 54.3 |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 872 | 0.905 [0.884, 0.923] | 0.905 [0.884, 0.923] | 1.551 [1.218, 1.925] | 0.184 [0.148, 0.224] | 0.092 [0.074, 0.113] | 0.093 | n/a | n/a | n/a | 119 |
 | Qwen/Qwen3-4B-Instruct-2507 | Normal generation | 300 | 0.887 [0.850, 0.920] | 0.888 [0.853, 0.922] | n/a | n/a | n/a | n/a | 0.997 | 0.887 | 0.000 | 563 |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 872 | 0.904 [0.884, 0.923] | 0.904 [0.884, 0.923] | 0.783 [0.596, 0.970] | 0.181 [0.145, 0.218] | 0.083 [0.069, 0.106] | 0.084 | n/a | n/a | n/a | 45.0 |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | 872 | 0.903 [0.883, 0.922] | 0.902 [0.882, 0.922] | 0.776 [0.594, 0.962] | 0.181 [0.144, 0.218] | 0.088 [0.072, 0.109] | 0.086 | n/a | n/a | n/a | 99.2 |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 500 | 0.900 [0.874, 0.924] | 0.900 [0.874, 0.924] | 1.079 [0.748, 1.390] | 0.193 [0.143, 0.242] | 0.096 [0.072, 0.122] | 0.095 | n/a | n/a | n/a | 44.0 |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | 500 | 0.898 [0.872, 0.922] | 0.898 [0.872, 0.922] | 1.058 [0.741, 1.367] | 0.194 [0.145, 0.243] | 0.097 [0.073, 0.123] | 0.097 | n/a | n/a | n/a | 96.4 |
 | Qwen/Qwen3-1.7B | Normal generation | 300 | 0.847 [0.803, 0.887] | 0.868 [0.827, 0.903] | n/a | n/a | n/a | n/a | 0.950 | 0.887 | 0.047 | 811 |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.898 [0.870, 0.924] | 0.898 [0.870, 0.924] | 0.495 [0.359, 0.638] | 0.191 [0.143, 0.243] | 0.093 [0.070, 0.121] | 0.094 | n/a | n/a | n/a | 43.2 |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.900 [0.872, 0.924] | 0.900 [0.872, 0.924] | 0.491 [0.355, 0.632] | 0.191 [0.143, 0.243] | 0.095 [0.070, 0.121] | 0.092 | n/a | n/a | n/a | 100 |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.898 [0.872, 0.926] | 0.898 [0.872, 0.926] | 0.395 [0.289, 0.507] | 0.185 [0.136, 0.233] | 0.087 [0.063, 0.115] | 0.087 | n/a | n/a | n/a | 43.6 |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.898 [0.872, 0.926] | 0.898 [0.872, 0.926] | 0.368 [0.271, 0.471] | 0.182 [0.134, 0.229] | 0.081 [0.058, 0.109] | 0.081 | n/a | n/a | n/a | 99.1 |
 | HuggingFaceTB/SmolLM3-3B | Normal generation | 100 | 0.840 [0.770, 0.910] | 0.878 [0.817, 0.933] | n/a | n/a | n/a | n/a | 0.910 | 0.910 | 0.120 | 424 |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 0.822 [0.790, 0.856] | 0.820 [0.788, 0.854] | 0.581 [0.460, 0.701] | 0.287 [0.235, 0.337] | 0.112 [0.088, 0.145] | 0.108 | n/a | n/a | n/a | 45.7 |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 0.822 [0.788, 0.856] | 0.820 [0.787, 0.854] | 0.584 [0.465, 0.703] | 0.290 [0.238, 0.339] | 0.122 [0.096, 0.154] | 0.112 | n/a | n/a | n/a | 98.9 |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 0.848 [0.818, 0.878] | 0.847 [0.817, 0.878] | 0.878 [0.679, 1.077] | 0.288 [0.230, 0.341] | 0.141 [0.112, 0.172] | 0.137 | n/a | n/a | n/a | 43.8 |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 0.844 [0.814, 0.874] | 0.843 [0.811, 0.874] | 0.880 [0.681, 1.077] | 0.288 [0.230, 0.342] | 0.137 [0.111, 0.170] | 0.133 | n/a | n/a | n/a | 96.9 |
 | Qwen/Qwen3-0.6B | Normal generation | 100 | 0.040 [0.010, 0.080] | 0.074 [0.018, 0.138] | n/a | n/a | n/a | n/a | 0.040 | 0.340 | 0.960 | 1084 |
 
 ### yelp (Yelp/yelp_review_full test, 5 labels, n = 1000)
 
 | Model | Arm | n | Accuracy | Macro-F1 | NLL | Brier | ECE (15 bins) | ECE (10 bins) | Valid answers | Salvaged accuracy | Hit token cap | Median ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 1000 | 0.372 [0.344, 0.401] | 0.331 [0.306, 0.355] | 2.112 [1.999, 2.233] | 0.916 [0.877, 0.957] | 0.352 [0.323, 0.380] | 0.354 | n/a | n/a | n/a | 37.9 |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 1000 | 0.383 [0.354, 0.410] | 0.342 [0.315, 0.367] | 2.110 [1.998, 2.233] | 0.916 [0.877, 0.959] | 0.343 [0.314, 0.374] | 0.345 | n/a | n/a | n/a | 87.0 |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 1000 | 0.472 [0.443, 0.501] | 0.403 [0.376, 0.429] | 1.616 [1.512, 1.725] | 0.754 [0.715, 0.793] | 0.262 [0.235, 0.295] | 0.262 | n/a | n/a | n/a | 35.3 |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 1000 | 0.476 [0.446, 0.505] | 0.406 [0.380, 0.431] | 1.616 [1.515, 1.725] | 0.754 [0.715, 0.793] | 0.258 [0.233, 0.289] | 0.257 | n/a | n/a | n/a | 79.6 |
 | Qwen/Qwen2.5-1.5B-Instruct | Normal generation | 300 | 0.273 [0.223, 0.323] | 0.252 [0.208, 0.297] | n/a | n/a | n/a | n/a | 0.910 | 0.273 | 0.000 | 356 |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1, questions before state | 200 | 0.435 [0.375, 0.505] | 0.357 [0.309, 0.408] | 1.559 [1.342, 1.784] | 0.775 [0.682, 0.861] | 0.314 [0.252, 0.372] | 0.314 | n/a | n/a | n/a | 256 |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 1000 | 0.403 [0.371, 0.431] | 0.375 [0.347, 0.401] | 9.960 [9.360, 10.598] | 1.161 [1.106, 1.223] | 0.572 [0.543, 0.603] | 0.572 | n/a | n/a | n/a | 76.9 |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 1000 | 0.400 [0.369, 0.428] | 0.371 [0.344, 0.397] | 9.963 [9.364, 10.593] | 1.163 [1.108, 1.224] | 0.574 [0.546, 0.605] | 0.573 | n/a | n/a | n/a | 150 |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 1000 | 0.439 [0.407, 0.470] | 0.405 [0.377, 0.431] | 9.317 [8.739, 9.928] | 1.097 [1.037, 1.158] | 0.537 [0.508, 0.570] | 0.537 | n/a | n/a | n/a | 68.8 |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 1000 | 0.438 [0.406, 0.468] | 0.404 [0.375, 0.430] | 9.340 [8.745, 9.951] | 1.099 [1.041, 1.159] | 0.542 [0.512, 0.574] | 0.536 | n/a | n/a | n/a | 122 |
 | Qwen/Qwen3-4B-Instruct-2507 | Normal generation | 300 | 0.393 [0.340, 0.447] | 0.368 [0.321, 0.412] | n/a | n/a | n/a | n/a | 0.977 | 0.393 | 0.000 | 584 |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 1000 | 0.402 [0.370, 0.431] | 0.373 [0.340, 0.401] | 5.464 [5.091, 5.836] | 1.102 [1.048, 1.163] | 0.535 [0.505, 0.568] | 0.534 | n/a | n/a | n/a | 45.9 |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | 1000 | 0.403 [0.371, 0.434] | 0.374 [0.341, 0.403] | 5.439 [5.062, 5.819] | 1.101 [1.044, 1.162] | 0.534 [0.503, 0.567] | 0.532 | n/a | n/a | n/a | 104 |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 500 | 0.546 [0.504, 0.590] | 0.507 [0.465, 0.545] | 3.896 [3.402, 4.437] | 0.825 [0.745, 0.904] | 0.394 [0.354, 0.438] | 0.392 | n/a | n/a | n/a | 44.0 |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | 500 | 0.542 [0.498, 0.584] | 0.503 [0.460, 0.542] | 3.895 [3.405, 4.433] | 0.833 [0.755, 0.910] | 0.407 [0.366, 0.449] | 0.403 | n/a | n/a | n/a | 97.3 |
 | Qwen/Qwen3-1.7B | Normal generation | 300 | 0.400 [0.343, 0.453] | 0.392 [0.339, 0.445] | n/a | n/a | n/a | n/a | 0.907 | 0.440 | 0.077 | 815 |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.538 [0.496, 0.584] | 0.494 [0.453, 0.537] | 1.466 [1.302, 1.633] | 0.674 [0.611, 0.732] | 0.252 [0.215, 0.294] | 0.252 | n/a | n/a | n/a | 60.6 |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.548 [0.504, 0.592] | 0.506 [0.465, 0.549] | 1.474 [1.309, 1.645] | 0.674 [0.610, 0.733] | 0.247 [0.215, 0.295] | 0.238 | n/a | n/a | n/a | 120 |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.584 [0.546, 0.626] | 0.558 [0.518, 0.599] | 1.424 [1.256, 1.601] | 0.635 [0.572, 0.695] | 0.234 [0.202, 0.282] | 0.234 | n/a | n/a | n/a | 50.8 |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.588 [0.550, 0.630] | 0.565 [0.525, 0.606] | 1.422 [1.255, 1.593] | 0.631 [0.566, 0.690] | 0.232 [0.197, 0.275] | 0.227 | n/a | n/a | n/a | 99.9 |
 | HuggingFaceTB/SmolLM3-3B | Normal generation | 100 | 0.520 [0.420, 0.610] | 0.510 [0.404, 0.593] | n/a | n/a | n/a | n/a | 0.940 | 0.550 | 0.050 | 498 |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 0.350 [0.310, 0.388] | 0.264 [0.234, 0.293] | 2.245 [2.077, 2.410] | 0.909 [0.858, 0.960] | 0.312 [0.273, 0.354] | 0.312 | n/a | n/a | n/a | 45.4 |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 0.338 [0.296, 0.378] | 0.255 [0.225, 0.284] | 2.254 [2.085, 2.422] | 0.911 [0.860, 0.963] | 0.326 [0.285, 0.363] | 0.326 | n/a | n/a | n/a | 100 |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 0.276 [0.238, 0.316] | 0.192 [0.160, 0.225] | 2.861 [2.660, 3.054] | 1.118 [1.055, 1.174] | 0.502 [0.463, 0.538] | 0.502 | n/a | n/a | n/a | 44.2 |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 0.268 [0.230, 0.308] | 0.183 [0.153, 0.216] | 2.901 [2.693, 3.094] | 1.128 [1.067, 1.187] | 0.510 [0.470, 0.546] | 0.510 | n/a | n/a | n/a | 97.6 |
 | Qwen/Qwen3-0.6B | Normal generation | 100 | 0.000 [0.000, 0.000] | 0.000 [0.000, 0.000] | n/a | n/a | n/a | n/a | 0.000 | 0.110 | 1.000 | 1141 |
 
 ## Calibration
 
-T is one scalar fitted by NLL on the calibration split (train rows, none of whose texts occur in the evaluation split): per dataset, and pooled over all datasets per model and arm. ECE and NLL are measured on the evaluation split only. n/a: the fit did not converge inside [0.05, 20] (too few calibration rows) or the split was not run. ECE brackets can sit above the point estimate (see Accuracy).
+T is one scalar fitted by NLL on the calibration split (train rows, none of whose texts occur in the evaluation split): per dataset, and pooled over all datasets per model and arm. ECE and NLL are measured on the evaluation split only. n/a: the fit did not converge inside [0.05, 20] (too few calibration rows) or the split was not run. ECE brackets can sit above the point estimate (see Accuracy). Diagrams: reliability before (T = 1) and after the pooled T, the one that ships, for the MirethSTM1 arm only (a report built without --figures keeps every arm's diagram and bin table in bench/out/<run>/report/).
 
 | Model | Arm | Dataset | T dataset | T pooled | ECE-15 at T = 1 | NLL at T = 1 | ECE-15 at T dataset | NLL at T dataset | ECE-15 at T pooled | NLL at T pooled | Diagram |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | ag_news | 3.039 | 2.285 | 0.125 [0.107, 0.149] | 0.951 | 0.044 [0.031, 0.069] | 0.498 | 0.056 [0.049, 0.086] | 0.530 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.ag_news.mireth.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | banking77 | 2.015 | 2.285 | 0.235 [0.209, 0.267] | 2.723 | 0.078 [0.055, 0.108] | 2.010 | 0.125 [0.102, 0.157] | 2.033 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.banking77.mireth.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | sst2 | 1.647 | 2.285 | 0.044 [0.034, 0.068] | 0.331 | 0.034 [0.024, 0.056] | 0.315 | 0.090 [0.071, 0.109] | 0.344 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.sst2.mireth.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | sst2_choice | 1.995 | 2.285 | 0.063 [0.049, 0.081] | 0.314 | 0.019 [0.013, 0.039] | 0.222 | 0.017 [0.014, 0.038] | 0.223 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.sst2_choice.mireth.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | yelp | 3.493 | 2.285 | 0.352 [0.323, 0.380] | 2.112 | 0.084 [0.075, 0.119] | 1.376 | 0.179 [0.155, 0.209] | 1.439 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.yelp.mireth.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | ag_news | 3.033 | 2.341 | 0.127 [0.109, 0.150] | 0.954 | 0.046 [0.033, 0.071] | 0.499 | 0.059 [0.050, 0.086] | 0.527 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.ag_news.first_token.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | banking77 | 2.007 | 2.341 | 0.095 [0.081, 0.125] | 3.029 | 0.085 [0.063, 0.112] | 2.503 | 0.104 [0.083, 0.134] | 2.524 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.banking77.first_token.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | sst2 | 1.645 | 2.341 | 0.041 [0.032, 0.066] | 0.330 | 0.032 [0.024, 0.057] | 0.315 | 0.092 [0.074, 0.111] | 0.346 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.sst2.first_token.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | sst2_choice | 2.002 | 2.341 | 0.060 [0.046, 0.077] | 0.315 | 0.019 [0.013, 0.039] | 0.222 | 0.025 [0.019, 0.043] | 0.224 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.sst2_choice.first_token.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | yelp | 3.494 | 2.341 | 0.343 [0.314, 0.374] | 2.110 | 0.093 [0.076, 0.122] | 1.376 | 0.168 [0.147, 0.200] | 1.431 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.yelp.first_token.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1, questions before state | ag_news | n/a | n/a | 0.198 [0.166, 0.291] | 1.280 | n/a | n/a | n/a | n/a | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.ag_news.questions_first.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1, questions before state | sst2 | n/a | n/a | 0.058 [0.043, 0.117] | 0.402 | n/a | n/a | n/a | n/a | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.sst2.questions_first.png) |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1, questions before state | yelp | n/a | n/a | 0.314 [0.252, 0.372] | 1.559 | n/a | n/a | n/a | n/a | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.yelp.questions_first.png) |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | ag_news | 8.009 | 8.036 | 0.112 [0.094, 0.133] | 2.165 | 0.039 [0.027, 0.060] | 0.415 | 0.039 [0.027, 0.059] | 0.415 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.ag_news.mireth.png) |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | banking77 | 6.430 | 8.036 | 0.309 [0.282, 0.337] | 6.581 | 0.056 [0.043, 0.087] | 1.526 | 0.146 [0.126, 0.176] | 1.606 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.banking77.mireth.png) |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | sst2 | 8.934 | 8.036 | 0.101 [0.083, 0.122] | 1.661 | 0.034 [0.023, 0.056] | 0.281 | 0.045 [0.031, 0.065] | 0.284 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.sst2.mireth.png) |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | sst2_choice | 8.409 | 8.036 | 0.095 [0.077, 0.116] | 1.379 | 0.040 [0.027, 0.062] | 0.269 | 0.049 [0.034, 0.069] | 0.268 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.sst2_choice.mireth.png) |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | yelp | 16.728 | 8.036 | 0.572 [0.543, 0.603] | 9.960 | 0.079 [0.060, 0.114] | 1.363 | 0.317 [0.290, 0.349] | 1.607 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.yelp.mireth.png) |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | ag_news | 8.002 | 8.552 | 0.112 [0.093, 0.132] | 2.172 | 0.037 [0.026, 0.059] | 0.416 | 0.030 [0.021, 0.050] | 0.414 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.ag_news.first_token.png) |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | banking77 | 6.643 | 8.552 | 0.154 [0.131, 0.180] | 6.512 | 0.059 [0.048, 0.087] | 2.219 | 0.127 [0.107, 0.155] | 2.285 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.banking77.first_token.png) |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | sst2 | 8.924 | 8.552 | 0.101 [0.083, 0.122] | 1.658 | 0.033 [0.022, 0.055] | 0.281 | 0.035 [0.021, 0.058] | 0.281 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.sst2.first_token.png) |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | sst2_choice | 8.383 | 8.552 | 0.096 [0.079, 0.116] | 1.380 | 0.038 [0.027, 0.060] | 0.269 | 0.035 [0.025, 0.056] | 0.269 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.sst2_choice.first_token.png) |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | yelp | 16.704 | 8.552 | 0.574 [0.546, 0.605] | 9.963 | 0.080 [0.061, 0.114] | 1.362 | 0.302 [0.274, 0.332] | 1.560 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.yelp.first_token.png) |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | ag_news | 8.731 | 6.750 | 0.170 [0.148, 0.195] | 2.791 | 0.044 [0.036, 0.072] | 0.527 | 0.081 [0.063, 0.105] | 0.566 | [png](benchmark/Qwen--Qwen3-1.7B.ag_news.mireth.png) |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | banking77 | 6.311 | 6.750 | 0.429 [0.401, 0.460] | 7.657 | 0.049 [0.040, 0.081] | 2.096 | 0.058 [0.045, 0.089] | 2.107 | [png](benchmark/Qwen--Qwen3-1.7B.banking77.mireth.png) |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | sst2 | 4.679 | 6.750 | 0.121 [0.099, 0.145] | 0.815 | 0.029 [0.021, 0.054] | 0.364 | 0.087 [0.066, 0.109] | 0.389 | [png](benchmark/Qwen--Qwen3-1.7B.sst2.mireth.png) |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | sst2_choice | 4.288 | 6.750 | 0.083 [0.069, 0.106] | 0.783 | 0.031 [0.019, 0.052] | 0.278 | 0.057 [0.042, 0.077] | 0.291 | [png](benchmark/Qwen--Qwen3-1.7B.sst2_choice.mireth.png) |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | yelp | 9.219 | 6.750 | 0.535 [0.505, 0.568] | 5.464 | 0.085 [0.068, 0.121] | 1.362 | 0.170 [0.142, 0.205] | 1.403 | [png](benchmark/Qwen--Qwen3-1.7B.yelp.mireth.png) |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | ag_news | 8.706 | 6.760 | 0.169 [0.147, 0.194] | 2.789 | 0.042 [0.032, 0.069] | 0.527 | 0.080 [0.060, 0.103] | 0.565 | [png](benchmark/Qwen--Qwen3-1.7B.ag_news.first_token.png) |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | banking77 | 6.180 | 6.760 | 0.179 [0.159, 0.208] | 6.679 | 0.070 [0.056, 0.100] | 2.512 | 0.085 [0.067, 0.113] | 2.527 | [png](benchmark/Qwen--Qwen3-1.7B.banking77.first_token.png) |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | sst2 | 4.652 | 6.760 | 0.124 [0.102, 0.148] | 0.806 | 0.040 [0.029, 0.064] | 0.363 | 0.089 [0.070, 0.111] | 0.390 | [png](benchmark/Qwen--Qwen3-1.7B.sst2.first_token.png) |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | sst2_choice | 4.228 | 6.760 | 0.088 [0.072, 0.109] | 0.776 | 0.035 [0.023, 0.056] | 0.278 | 0.057 [0.043, 0.078] | 0.291 | [png](benchmark/Qwen--Qwen3-1.7B.sst2_choice.first_token.png) |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | yelp | 9.263 | 6.760 | 0.534 [0.503, 0.567] | 5.439 | 0.077 [0.061, 0.113] | 1.361 | 0.171 [0.142, 0.204] | 1.401 | [png](benchmark/Qwen--Qwen3-1.7B.yelp.first_token.png) |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | ag_news | 3.041 | 2.677 | 0.164 [0.133, 0.200] | 1.321 | 0.044 [0.036, 0.085] | 0.617 | 0.067 [0.044, 0.103] | 0.639 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.ag_news.mireth.png) |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | banking77 | 2.734 | 2.677 | 0.383 [0.348, 0.421] | 4.684 | 0.088 [0.061, 0.123] | 3.222 | 0.095 [0.067, 0.127] | 3.220 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.banking77.mireth.png) |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | sst2 | 1.847 | 2.677 | 0.082 [0.059, 0.114] | 0.369 | 0.043 [0.032, 0.073] | 0.312 | 0.081 [0.068, 0.112] | 0.339 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.sst2.mireth.png) |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | sst2_choice | 2.314 | 2.677 | 0.093 [0.070, 0.121] | 0.495 | 0.034 [0.023, 0.063] | 0.290 | 0.043 [0.034, 0.071] | 0.287 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.sst2_choice.mireth.png) |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | yelp | 2.713 | 2.677 | 0.252 [0.215, 0.294] | 1.466 | 0.096 [0.075, 0.144] | 1.047 | 0.096 [0.074, 0.141] | 1.047 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.yelp.mireth.png) |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | ag_news | 3.034 | 2.704 | 0.161 [0.132, 0.197] | 1.322 | 0.048 [0.035, 0.084] | 0.619 | 0.066 [0.046, 0.100] | 0.638 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.ag_news.first_token.png) |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | banking77 | 2.860 | 2.704 | 0.131 [0.107, 0.161] | 4.653 | 0.094 [0.063, 0.123] | 3.616 | 0.085 [0.055, 0.115] | 3.616 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.banking77.first_token.png) |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | sst2 | 1.811 | 2.704 | 0.083 [0.058, 0.113] | 0.364 | 0.052 [0.037, 0.079] | 0.310 | 0.072 [0.066, 0.108] | 0.340 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.sst2.first_token.png) |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | sst2_choice | 2.289 | 2.704 | 0.095 [0.070, 0.121] | 0.491 | 0.031 [0.020, 0.061] | 0.292 | 0.045 [0.033, 0.073] | 0.290 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.sst2_choice.first_token.png) |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | yelp | 2.728 | 2.704 | 0.247 [0.215, 0.295] | 1.474 | 0.105 [0.076, 0.152] | 1.050 | 0.110 [0.079, 0.154] | 1.050 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.yelp.first_token.png) |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | ag_news | 5.390 | 3.830 | 0.241 [0.208, 0.279] | 2.479 | 0.087 [0.071, 0.132] | 0.832 | 0.097 [0.080, 0.140] | 0.890 | [png](benchmark/Qwen--Qwen3-0.6B.ag_news.mireth.png) |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | banking77 | 3.380 | 3.830 | 0.388 [0.347, 0.431] | 4.825 | 0.107 [0.086, 0.157] | 2.404 | 0.145 [0.109, 0.190] | 2.435 | [png](benchmark/Qwen--Qwen3-0.6B.banking77.mireth.png) |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | sst2 | 8.101 | 3.830 | 0.401 [0.362, 0.446] | 1.366 | 0.185 [0.158, 0.223] | 0.651 | 0.250 [0.212, 0.291] | 0.673 | [png](benchmark/Qwen--Qwen3-0.6B.sst2.mireth.png) |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | sst2_choice | 2.797 | 3.830 | 0.112 [0.088, 0.145] | 0.581 | 0.036 [0.033, 0.077] | 0.407 | 0.072 [0.061, 0.109] | 0.427 | [png](benchmark/Qwen--Qwen3-0.6B.sst2_choice.mireth.png) |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | yelp | 3.956 | 3.830 | 0.312 [0.273, 0.354] | 2.245 | 0.073 [0.052, 0.118] | 1.505 | 0.073 [0.053, 0.114] | 1.506 | [png](benchmark/Qwen--Qwen3-0.6B.yelp.mireth.png) |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | ag_news | 5.357 | 3.968 | 0.235 [0.206, 0.275] | 2.469 | 0.081 [0.067, 0.126] | 0.831 | 0.096 [0.079, 0.142] | 0.878 | [png](benchmark/Qwen--Qwen3-0.6B.ag_news.first_token.png) |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | banking77 | 3.409 | 3.968 | 0.165 [0.143, 0.205] | 4.621 | 0.072 [0.054, 0.115] | 2.830 | 0.109 [0.080, 0.148] | 2.861 | [png](benchmark/Qwen--Qwen3-0.6B.banking77.first_token.png) |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | sst2 | 8.108 | 3.968 | 0.403 [0.366, 0.448] | 1.354 | 0.201 [0.171, 0.239] | 0.650 | 0.233 [0.206, 0.277] | 0.668 | [png](benchmark/Qwen--Qwen3-0.6B.sst2.first_token.png) |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | sst2_choice | 2.805 | 3.968 | 0.122 [0.096, 0.154] | 0.584 | 0.030 [0.030, 0.074] | 0.409 | 0.074 [0.058, 0.110] | 0.431 | [png](benchmark/Qwen--Qwen3-0.6B.sst2_choice.first_token.png) |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | yelp | 3.994 | 3.968 | 0.326 [0.285, 0.363] | 2.254 | 0.073 [0.051, 0.119] | 1.506 | 0.075 [0.054, 0.120] | 1.506 | [png](benchmark/Qwen--Qwen3-0.6B.yelp.first_token.png) |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | ag_news | 2.729 | 2.112 | 0.116 [0.097, 0.139] | 0.832 | 0.056 [0.050, 0.084] | 0.488 | 0.062 [0.053, 0.089] | 0.511 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.ag_news.mireth.png) |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | banking77 | 1.933 | 2.112 | 0.224 [0.197, 0.255] | 2.805 | 0.095 [0.073, 0.128] | 2.224 | 0.125 [0.101, 0.158] | 2.239 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.banking77.mireth.png) |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | sst2 | 0.820 | 2.112 | 0.070 [0.057, 0.089] | 0.286 | 0.039 [0.030, 0.059] | 0.269 | 0.199 [0.179, 0.216] | 0.404 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.sst2.mireth.png) |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | sst2_choice | 2.490 | 2.112 | 0.069 [0.054, 0.086] | 0.387 | 0.022 [0.014, 0.039] | 0.224 | 0.036 [0.025, 0.056] | 0.232 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.sst2_choice.mireth.png) |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | yelp | 2.636 | 2.112 | 0.262 [0.235, 0.295] | 1.616 | 0.094 [0.070, 0.126] | 1.220 | 0.122 [0.102, 0.155] | 1.238 | [png](benchmark/Qwen--Qwen2.5-1.5B-Instruct.yelp.mireth.png) |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | ag_news | 2.723 | 2.103 | 0.112 [0.095, 0.137] | 0.831 | 0.055 [0.043, 0.080] | 0.488 | 0.067 [0.053, 0.090] | 0.512 | not published |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | banking77 | 1.846 | 2.103 | 0.077 [0.066, 0.108] | 3.024 | 0.083 [0.065, 0.114] | 2.660 | 0.115 [0.091, 0.142] | 2.678 | not published |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | sst2 | 0.744 | 2.103 | 0.082 [0.065, 0.100] | 0.287 | 0.037 [0.031, 0.059] | 0.262 | 0.209 [0.189, 0.226] | 0.406 | not published |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | sst2_choice | 2.497 | 2.103 | 0.068 [0.054, 0.086] | 0.382 | 0.021 [0.014, 0.040] | 0.222 | 0.036 [0.026, 0.056] | 0.230 | not published |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | yelp | 2.643 | 2.103 | 0.258 [0.233, 0.289] | 1.616 | 0.097 [0.077, 0.129] | 1.221 | 0.115 [0.100, 0.151] | 1.240 | not published |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | ag_news | 8.762 | 7.930 | 0.110 [0.092, 0.130] | 2.438 | 0.025 [0.020, 0.047] | 0.428 | 0.047 [0.035, 0.066] | 0.438 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.ag_news.mireth.png) |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | banking77 | 6.382 | 7.930 | 0.310 [0.282, 0.337] | 6.562 | 0.048 [0.040, 0.082] | 1.552 | 0.143 [0.122, 0.171] | 1.625 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.banking77.mireth.png) |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | sst2 | 6.908 | 7.930 | 0.103 [0.084, 0.124] | 1.273 | 0.033 [0.021, 0.053] | 0.295 | 0.068 [0.054, 0.089] | 0.301 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.sst2.mireth.png) |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | sst2_choice | 8.880 | 7.930 | 0.092 [0.074, 0.113] | 1.546 | 0.053 [0.039, 0.074] | 0.272 | 0.030 [0.022, 0.051] | 0.274 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.sst2_choice.mireth.png) |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | yelp | 15.383 | 7.930 | 0.537 [0.508, 0.570] | 9.317 | 0.124 [0.099, 0.155] | 1.325 | 0.298 [0.272, 0.329] | 1.524 | [png](benchmark/Qwen--Qwen3-4B-Instruct-2507.yelp.mireth.png) |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | ag_news | 8.733 | 8.428 | 0.110 [0.092, 0.131] | 2.442 | 0.023 [0.019, 0.046] | 0.429 | 0.033 [0.021, 0.052] | 0.432 | not published |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | banking77 | 6.622 | 8.428 | 0.153 [0.130, 0.181] | 6.539 | 0.053 [0.046, 0.083] | 2.236 | 0.120 [0.101, 0.148] | 2.291 | not published |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | sst2 | 6.867 | 8.428 | 0.101 [0.083, 0.123] | 1.257 | 0.036 [0.024, 0.055] | 0.293 | 0.082 [0.068, 0.103] | 0.304 | not published |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | sst2_choice | 8.835 | 8.428 | 0.092 [0.074, 0.113] | 1.551 | 0.040 [0.027, 0.062] | 0.273 | 0.046 [0.032, 0.069] | 0.273 | not published |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | yelp | 15.366 | 8.428 | 0.542 [0.512, 0.574] | 9.340 | 0.120 [0.096, 0.150] | 1.325 | 0.281 [0.255, 0.313] | 1.484 | not published |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | ag_news | 9.557 | 7.007 | 0.182 [0.150, 0.217] | 3.394 | 0.052 [0.035, 0.090] | 0.603 | 0.106 [0.079, 0.140] | 0.677 | [png](benchmark/Qwen--Qwen3-1.7B.ag_news.mireth.png) |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | banking77 | 6.772 | 7.007 | 0.448 [0.409, 0.494] | 8.298 | 0.068 [0.054, 0.119] | 2.139 | 0.071 [0.062, 0.122] | 2.142 | [png](benchmark/Qwen--Qwen3-1.7B.banking77.mireth.png) |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | sst2 | 3.293 | 7.007 | 0.070 [0.057, 0.107] | 0.467 | 0.079 [0.058, 0.110] | 0.356 | 0.202 [0.179, 0.232] | 0.459 | [png](benchmark/Qwen--Qwen3-1.7B.sst2.mireth.png) |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | sst2_choice | 6.499 | 7.007 | 0.096 [0.072, 0.122] | 1.079 | 0.027 [0.019, 0.057] | 0.290 | 0.033 [0.025, 0.064] | 0.292 | [png](benchmark/Qwen--Qwen3-1.7B.sst2_choice.mireth.png) |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | yelp | 6.763 | 7.007 | 0.394 [0.354, 0.438] | 3.896 | 0.076 [0.063, 0.129] | 1.157 | 0.071 [0.062, 0.129] | 1.156 | [png](benchmark/Qwen--Qwen3-1.7B.yelp.mireth.png) |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | ag_news | 9.562 | 7.024 | 0.185 [0.153, 0.219] | 3.400 | 0.046 [0.032, 0.084] | 0.605 | 0.103 [0.074, 0.137] | 0.678 | not published |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | banking77 | 6.717 | 7.024 | 0.201 [0.175, 0.245] | 7.220 | 0.084 [0.064, 0.123] | 2.523 | 0.083 [0.063, 0.123] | 2.529 | not published |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | sst2 | 3.213 | 7.024 | 0.083 [0.062, 0.114] | 0.467 | 0.078 [0.057, 0.109] | 0.351 | 0.205 [0.180, 0.234] | 0.458 | not published |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | sst2_choice | 6.556 | 7.024 | 0.097 [0.073, 0.123] | 1.058 | 0.028 [0.020, 0.057] | 0.288 | 0.030 [0.024, 0.061] | 0.290 | not published |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | yelp | 6.766 | 7.024 | 0.407 [0.366, 0.449] | 3.895 | 0.064 [0.063, 0.124] | 1.159 | 0.067 [0.060, 0.123] | 1.158 | not published |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | ag_news | 2.956 | 2.702 | 0.129 [0.105, 0.163] | 1.319 | 0.033 [0.030, 0.071] | 0.620 | 0.039 [0.031, 0.079] | 0.636 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.ag_news.mireth.png) |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | banking77 | 2.694 | 2.702 | 0.359 [0.323, 0.398] | 4.690 | 0.107 [0.074, 0.145] | 3.216 | 0.108 [0.074, 0.146] | 3.216 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.banking77.mireth.png) |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | sst2 | 3.084 | 2.702 | 0.144 [0.116, 0.179] | 0.662 | 0.066 [0.045, 0.099] | 0.418 | 0.049 [0.032, 0.084] | 0.415 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.sst2.mireth.png) |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | sst2_choice | 1.840 | 2.702 | 0.087 [0.063, 0.115] | 0.395 | 0.034 [0.023, 0.062] | 0.279 | 0.054 [0.039, 0.083] | 0.286 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.sst2_choice.mireth.png) |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | yelp | 2.738 | 2.702 | 0.234 [0.202, 0.282] | 1.424 | 0.059 [0.048, 0.112] | 0.990 | 0.056 [0.047, 0.109] | 0.990 | [png](benchmark/HuggingFaceTB--SmolLM3-3B.yelp.mireth.png) |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | ag_news | 2.810 | 2.545 | 0.124 [0.099, 0.158] | 1.242 | 0.027 [0.027, 0.067] | 0.614 | 0.034 [0.026, 0.071] | 0.631 | not published |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | banking77 | 2.441 | 2.545 | 0.157 [0.126, 0.192] | 4.320 | 0.091 [0.059, 0.123] | 3.441 | 0.097 [0.066, 0.131] | 3.443 | not published |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | sst2 | 3.022 | 2.545 | 0.142 [0.114, 0.179] | 0.656 | 0.057 [0.037, 0.091] | 0.427 | 0.047 [0.030, 0.080] | 0.424 | not published |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | sst2_choice | 1.652 | 2.545 | 0.081 [0.058, 0.109] | 0.368 | 0.036 [0.020, 0.064] | 0.282 | 0.051 [0.039, 0.080] | 0.291 | not published |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | yelp | 2.721 | 2.545 | 0.232 [0.197, 0.275] | 1.422 | 0.065 [0.050, 0.117] | 0.990 | 0.069 [0.054, 0.117] | 0.991 | not published |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | ag_news | 5.900 | 4.639 | 0.242 [0.209, 0.281] | 2.684 | 0.059 [0.053, 0.104] | 0.753 | 0.098 [0.076, 0.140] | 0.785 | [png](benchmark/Qwen--Qwen3-0.6B.ag_news.mireth.png) |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | banking77 | 3.909 | 4.639 | 0.414 [0.369, 0.455] | 5.571 | 0.077 [0.064, 0.129] | 2.444 | 0.153 [0.118, 0.197] | 2.509 | [png](benchmark/Qwen--Qwen3-0.6B.banking77.mireth.png) |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | sst2 | 11.539 | 4.639 | 0.395 [0.358, 0.439] | 1.656 | 0.204 [0.167, 0.242] | 0.644 | 0.261 [0.225, 0.297] | 0.664 | [png](benchmark/Qwen--Qwen3-0.6B.sst2.mireth.png) |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | sst2_choice | 5.027 | 4.639 | 0.141 [0.112, 0.172] | 0.878 | 0.062 [0.043, 0.094] | 0.373 | 0.041 [0.032, 0.079] | 0.370 | [png](benchmark/Qwen--Qwen3-0.6B.sst2_choice.mireth.png) |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | yelp | 5.945 | 4.639 | 0.502 [0.463, 0.538] | 2.861 | 0.117 [0.081, 0.153] | 1.524 | 0.130 [0.101, 0.168] | 1.534 | [png](benchmark/Qwen--Qwen3-0.6B.yelp.mireth.png) |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | ag_news | 5.902 | 4.886 | 0.245 [0.210, 0.282] | 2.702 | 0.059 [0.050, 0.102] | 0.755 | 0.097 [0.071, 0.136] | 0.776 | not published |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | banking77 | 3.973 | 4.886 | 0.190 [0.159, 0.227] | 5.265 | 0.075 [0.055, 0.116] | 2.892 | 0.121 [0.089, 0.160] | 2.948 | not published |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | sst2 | 11.531 | 4.886 | 0.398 [0.363, 0.445] | 1.666 | 0.195 [0.157, 0.234] | 0.644 | 0.266 [0.230, 0.301] | 0.659 | not published |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | sst2_choice | 4.973 | 4.886 | 0.137 [0.111, 0.170] | 0.880 | 0.047 [0.031, 0.080] | 0.374 | 0.048 [0.031, 0.081] | 0.373 | not published |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | yelp | 6.140 | 4.886 | 0.510 [0.470, 0.546] | 2.901 | 0.119 [0.084, 0.156] | 1.524 | 0.144 [0.116, 0.182] | 1.532 | not published |
 
 ## Yelp: score levels
 
 Levels 0 to 4 (one to five stars). Argmax is the most likely level; the expected level is sum of k p_k. Normal generation is scored on its valid answers only.
 
-| Model | Arm | n | MAE argmax | RMSE argmax | Within one level | MAE expected | RMSE expected | MAE expected at T | RMSE expected at T |
+| Model | Arm | n | MAE argmax | RMSE argmax | Within one level | MAE expected | RMSE expected | MAE expected at T pooled | RMSE expected at T pooled |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 1000 | 0.947 | 1.346 | 0.774 | 0.884 | 1.140 | 0.884 | 1.056 |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 1000 | 0.921 | 1.322 | 0.786 | 0.885 | 1.140 | 0.884 | 1.057 |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | 1000 | 0.691 | 1.038 | 0.863 | 0.640 | 0.853 | 0.691 | 0.864 |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | 1000 | 0.677 | 1.017 | 0.870 | 0.641 | 0.854 | 0.693 | 0.866 |
 | Qwen/Qwen2.5-1.5B-Instruct | Normal generation | 273 valid of 300 | 1.073 | 1.441 | 0.729 | n/a | n/a | n/a | n/a |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1, questions before state | 200 | 0.755 | 1.107 | 0.845 | 0.706 | 0.953 | n/a | n/a |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 1000 | 0.760 | 1.057 | 0.851 | 0.767 | 1.055 | 0.806 | 0.961 |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 1000 | 0.764 | 1.059 | 0.849 | 0.767 | 1.054 | 0.805 | 0.960 |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | 1000 | 0.716 | 1.029 | 0.860 | 0.723 | 1.022 | 0.710 | 0.897 |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | 1000 | 0.713 | 1.023 | 0.864 | 0.723 | 1.021 | 0.711 | 0.886 |
 | Qwen/Qwen3-4B-Instruct-2507 | Normal generation | 293 valid of 300 | 0.730 | 1.002 | 0.870 | n/a | n/a | n/a | n/a |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 1000 | 0.764 | 1.074 | 0.856 | 0.759 | 1.040 | 0.909 | 1.075 |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | 1000 | 0.763 | 1.071 | 0.854 | 0.759 | 1.036 | 0.910 | 1.075 |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | 500 | 0.564 | 0.906 | 0.906 | 0.566 | 0.881 | 0.661 | 0.820 |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | 500 | 0.580 | 0.932 | 0.898 | 0.574 | 0.886 | 0.664 | 0.823 |
 | Qwen/Qwen3-1.7B | Normal generation | 272 valid of 300 | 0.625 | 0.883 | 0.941 | n/a | n/a | n/a | n/a |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.558 | 0.884 | 0.918 | 0.527 | 0.766 | 0.543 | 0.686 |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.544 | 0.872 | 0.922 | 0.527 | 0.765 | 0.544 | 0.686 |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | 500 | 0.498 | 0.823 | 0.926 | 0.503 | 0.741 | 0.536 | 0.673 |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | 500 | 0.498 | 0.833 | 0.926 | 0.501 | 0.739 | 0.529 | 0.671 |
 | HuggingFaceTB/SmolLM3-3B | Normal generation | 94 valid of 100 | 0.532 | 0.838 | 0.915 | n/a | n/a | n/a | n/a |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 1.264 | 1.779 | 0.640 | 1.146 | 1.457 | 1.065 | 1.249 |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 1.292 | 1.801 | 0.632 | 1.152 | 1.461 | 1.067 | 1.251 |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | 500 | 1.608 | 2.123 | 0.536 | 1.445 | 1.832 | 1.111 | 1.319 |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | 500 | 1.636 | 2.148 | 0.530 | 1.473 | 1.861 | 1.112 | 1.319 |
 
 ## SST-2: yes-bias
 
@@ -239,94 +240,171 @@ The same sentences as a yes/no question ("Is the sentiment positive?") and as a 
 
 | Model | Arm | Form | n | Accuracy | Predicted positive | Gold positive |
 | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | yes/no | 872 | 0.884 | 0.423 | 0.509 |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | yes/no | 872 | 0.882 | 0.421 | 0.509 |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | yes/no | 872 | 0.904 | 0.463 | 0.509 |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | yes/no | 872 | 0.909 | 0.474 | 0.509 |
 | Qwen/Qwen2.5-1.5B-Instruct | Normal generation | yes/no | 300 | 0.653 | 0.840 | 0.500 |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1, questions before state | yes/no | 200 | 0.820 | 0.330 | 0.500 |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | choice | 872 | 0.924 | 0.489 | 0.509 |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | choice | 872 | 0.925 | 0.487 | 0.509 |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | choice | 872 | 0.923 | 0.492 | 0.509 |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | choice | 872 | 0.924 | 0.493 | 0.509 |
 | Qwen/Qwen2.5-1.5B-Instruct | Normal generation | choice | 300 | 0.903 | 0.497 | 0.500 |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | yes/no | 872 | 0.899 | 0.459 | 0.509 |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | yes/no | 872 | 0.899 | 0.459 | 0.509 |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | yes/no | 872 | 0.893 | 0.453 | 0.509 |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | yes/no | 872 | 0.896 | 0.453 | 0.509 |
 | Qwen/Qwen3-4B-Instruct-2507 | Normal generation | yes/no | 300 | 0.250 | 0.000 | 0.500 |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | choice | 872 | 0.903 | 0.524 | 0.509 |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | choice | 872 | 0.900 | 0.524 | 0.509 |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | choice | 872 | 0.908 | 0.525 | 0.509 |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | choice | 872 | 0.905 | 0.526 | 0.509 |
 | Qwen/Qwen3-4B-Instruct-2507 | Normal generation | choice | 300 | 0.887 | 0.517 | 0.500 |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | yes/no | 872 | 0.846 | 0.612 | 0.509 |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | yes/no | 872 | 0.844 | 0.615 | 0.509 |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | yes/no | 500 | 0.876 | 0.496 | 0.500 |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | yes/no | 500 | 0.880 | 0.488 | 0.500 |
 | Qwen/Qwen3-1.7B | Normal generation | yes/no | 300 | 0.033 | 0.003 | 0.500 |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | choice | 872 | 0.904 | 0.528 | 0.509 |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | choice | 872 | 0.903 | 0.531 | 0.509 |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | choice | 500 | 0.900 | 0.536 | 0.500 |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | choice | 500 | 0.898 | 0.538 | 0.500 |
 | Qwen/Qwen3-1.7B | Normal generation | choice | 300 | 0.847 | 0.513 | 0.500 |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | yes/no | 500 | 0.856 | 0.392 | 0.500 |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | yes/no | 500 | 0.866 | 0.410 | 0.500 |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | yes/no | 500 | 0.818 | 0.342 | 0.500 |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | yes/no | 500 | 0.820 | 0.344 | 0.500 |
 | HuggingFaceTB/SmolLM3-3B | Normal generation | yes/no | 100 | 0.480 | 0.230 | 0.500 |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | choice | 500 | 0.898 | 0.446 | 0.500 |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | choice | 500 | 0.900 | 0.444 | 0.500 |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | choice | 500 | 0.898 | 0.442 | 0.500 |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | choice | 500 | 0.898 | 0.442 | 0.500 |
 | HuggingFaceTB/SmolLM3-3B | Normal generation | choice | 100 | 0.840 | 0.490 | 0.500 |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | yes/no | 500 | 0.530 | 0.970 | 0.500 |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | yes/no | 500 | 0.526 | 0.974 | 0.500 |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | yes/no | 500 | 0.542 | 0.958 | 0.500 |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | yes/no | 500 | 0.540 | 0.960 | 0.500 |
 | Qwen/Qwen3-0.6B | Normal generation | yes/no | 100 | 0.000 | 0.000 | 0.500 |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | choice | 500 | 0.822 | 0.602 | 0.500 |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | choice | 500 | 0.822 | 0.598 | 0.500 |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | choice | 500 | 0.848 | 0.572 | 0.500 |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | choice | 500 | 0.844 | 0.572 | 0.500 |
 | Qwen/Qwen3-0.6B | Normal generation | choice | 100 | 0.040 | 0.000 | 0.500 |
+
+## Probability on the allowed answers
+
+A label's score is the log-probability of its exact answer text, so exp(score) summed over a question's labels is the share of the model's probability that falls on an allowed answer at all. Where that share is small the model would rather write something else at that place (a quoted "true", a quoted number, other text), and the answer is read from the tail of its distribution: the ranking can still be right, but the scores sit far below 0, where bf16 rounding is coarser and exact ties become possible. MirethSTM1 arm, evaluation split: the median share over the rows and, in brackets, the share of rows where the labels hold under 1%.
+
+| Model | ag_news | banking77 | sst2 | sst2_choice | yelp |
+| --- | --- | --- | --- | --- | --- |
+| Qwen/Qwen2.5-1.5B-Instruct | 0.998 [0.000] | 0.842 [0.000] | 0.240 [0.000] | 0.998 [0.000] | 0.965 [0.001] |
+| Qwen/Qwen3-4B-Instruct-2507 | 1.000 [0.000] | 1.000 [0.001] | 0.047 [0.460] | 1.000 [0.005] | 1.000 [0.016] |
+| Qwen/Qwen3-1.7B | 1.000 [0.000] | 1.000 [0.002] | 0.852 [0.000] | 1.000 [0.000] | 0.000 [0.990] |
+| HuggingFaceTB/SmolLM3-3B | 0.855 [0.000] | 0.155 [0.008] | 0.848 [0.000] | 0.906 [0.000] | 0.390 [0.012] |
+| Qwen/Qwen3-0.6B | 0.999 [0.004] | 0.989 [0.000] | 0.001 [1.000] | 0.986 [0.000] | 0.397 [0.032] |
 
 ## First-token ties
 
-The first-token arm scores only each label's first token, so options whose first tokens are the same token get the same score. A tie goes to the earlier option in the request (as the original demo's argmax does), and the tied options split the probability. Labels in ties: mean per row of options sharing their first token with another option.
+The first-token arm scores only each label's first token, so options whose first tokens are the same token get the same score. A tie goes to the earlier option in the request, as the argmax of the original demo's PyTorch path does (its Mac build generates a few tokens when first tokens collide; this arm does not), and the tied options split the probability. Labels in ties: mean per row of options whose score equals another option's, which counts shared first tokens and also chance ties on the bf16 grid.
 
 | Model | Dataset | n | Rows with a tie | Labels in ties | Predictions decided by the tie rule | Accuracy of those |
 | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | ag_news | 1000 | 38 | 0.1 | 2 | 0.000 |
-| Qwen/Qwen2.5-1.5B-Instruct | banking77 | 1000 | 1000 | 55.4 | 637 | 0.149 |
-| Qwen/Qwen2.5-1.5B-Instruct | sst2 | 872 | 5 | 0.0 | 5 | 0.600 |
-| Qwen/Qwen2.5-1.5B-Instruct | sst2_choice | 872 | 1 | 0.0 | 1 | 1.000 |
-| Qwen/Qwen2.5-1.5B-Instruct | yelp | 1000 | 151 | 0.3 | 42 | 0.333 |
-| Qwen/Qwen2.5-1.5B-Instruct | jevbench_easy | 48 | 0 | 0.0 | 0 | n/a |
-| Qwen/Qwen2.5-1.5B-Instruct | jevbench_standard | 72 | 13 | 0.4 | 9 | 0.222 |
-| Qwen/Qwen2.5-1.5B-Instruct | jevbench_hard | 111 | 31 | 0.8 | 20 | 0.150 |
-| Qwen/Qwen3-4B-Instruct-2507 | ag_news | 1000 | 21 | 0.0 | 2 | 0.500 |
-| Qwen/Qwen3-4B-Instruct-2507 | banking77 | 1000 | 1000 | 52.0 | 631 | 0.200 |
-| Qwen/Qwen3-4B-Instruct-2507 | sst2 | 872 | 0 | 0.0 | 0 | n/a |
-| Qwen/Qwen3-4B-Instruct-2507 | sst2_choice | 872 | 1 | 0.0 | 1 | 0.000 |
-| Qwen/Qwen3-4B-Instruct-2507 | yelp | 1000 | 29 | 0.1 | 7 | 0.429 |
-| Qwen/Qwen3-4B-Instruct-2507 | jevbench_easy | 48 | 0 | 0.0 | 0 | n/a |
-| Qwen/Qwen3-4B-Instruct-2507 | jevbench_standard | 72 | 13 | 0.4 | 10 | 0.200 |
-| Qwen/Qwen3-4B-Instruct-2507 | jevbench_hard | 111 | 27 | 0.7 | 15 | 0.200 |
-| Qwen/Qwen3-1.7B | ag_news | 1000 | 16 | 0.0 | 1 | 0.000 |
-| Qwen/Qwen3-1.7B | banking77 | 1000 | 1000 | 53.3 | 670 | 0.169 |
-| Qwen/Qwen3-1.7B | sst2 | 872 | 6 | 0.0 | 6 | 0.000 |
-| Qwen/Qwen3-1.7B | sst2_choice | 872 | 1 | 0.0 | 1 | 0.000 |
-| Qwen/Qwen3-1.7B | yelp | 1000 | 82 | 0.2 | 11 | 0.273 |
-| Qwen/Qwen3-1.7B | jevbench_easy | 48 | 1 | 0.0 | 0 | n/a |
-| Qwen/Qwen3-1.7B | jevbench_standard | 72 | 13 | 0.4 | 13 | 0.154 |
-| Qwen/Qwen3-1.7B | jevbench_hard | 111 | 31 | 0.8 | 21 | 0.143 |
-| HuggingFaceTB/SmolLM3-3B | ag_news | 500 | 16 | 0.1 | 0 | n/a |
-| HuggingFaceTB/SmolLM3-3B | banking77 | 500 | 500 | 57.0 | 243 | 0.111 |
-| HuggingFaceTB/SmolLM3-3B | sst2 | 500 | 7 | 0.0 | 7 | 0.857 |
-| HuggingFaceTB/SmolLM3-3B | sst2_choice | 500 | 1 | 0.0 | 1 | 1.000 |
-| HuggingFaceTB/SmolLM3-3B | yelp | 500 | 60 | 0.2 | 19 | 0.421 |
-| HuggingFaceTB/SmolLM3-3B | jevbench_easy | 48 | 2 | 0.1 | 0 | n/a |
-| HuggingFaceTB/SmolLM3-3B | jevbench_standard | 72 | 14 | 0.4 | 10 | 0.200 |
-| HuggingFaceTB/SmolLM3-3B | jevbench_hard | 111 | 30 | 0.7 | 18 | 0.222 |
-| Qwen/Qwen3-0.6B | ag_news | 500 | 13 | 0.1 | 2 | 0.500 |
-| Qwen/Qwen3-0.6B | banking77 | 500 | 500 | 53.8 | 326 | 0.138 |
-| Qwen/Qwen3-0.6B | sst2 | 500 | 2 | 0.0 | 2 | 0.000 |
-| Qwen/Qwen3-0.6B | sst2_choice | 500 | 2 | 0.0 | 2 | 0.500 |
-| Qwen/Qwen3-0.6B | yelp | 500 | 87 | 0.4 | 19 | 0.211 |
-| Qwen/Qwen3-0.6B | jevbench_easy | 48 | 0 | 0.0 | 0 | n/a |
-| Qwen/Qwen3-0.6B | jevbench_standard | 72 | 15 | 0.5 | 11 | 0.182 |
-| Qwen/Qwen3-0.6B | jevbench_hard | 111 | 29 | 0.7 | 19 | 0.105 |
+| Qwen/Qwen2.5-1.5B-Instruct | ag_news | 1000 | 37 | 0.1 | 7 | 0.429 |
+| Qwen/Qwen2.5-1.5B-Instruct | banking77 | 1000 | 1000 | 55.2 | 636 | 0.171 |
+| Qwen/Qwen2.5-1.5B-Instruct | sst2 | 872 | 9 | 0.0 | 9 | 0.889 |
+| Qwen/Qwen2.5-1.5B-Instruct | sst2_choice | 872 | 0 | 0.0 | 0 | n/a |
+| Qwen/Qwen2.5-1.5B-Instruct | yelp | 1000 | 152 | 0.3 | 21 | 0.429 |
+| Qwen/Qwen2.5-1.5B-Instruct | public items, easy | 48 | 2 | 0.1 | 1 | 0.000 |
+| Qwen/Qwen2.5-1.5B-Instruct | public items, standard | 72 | 15 | 0.4 | 12 | 0.250 |
+| Qwen/Qwen2.5-1.5B-Instruct | public items, hard | 111 | 32 | 0.8 | 21 | 0.143 |
+| Qwen/Qwen3-4B-Instruct-2507 | ag_news | 1000 | 27 | 0.1 | 1 | 0.000 |
+| Qwen/Qwen3-4B-Instruct-2507 | banking77 | 1000 | 1000 | 51.9 | 635 | 0.197 |
+| Qwen/Qwen3-4B-Instruct-2507 | sst2 | 872 | 1 | 0.0 | 1 | 0.000 |
+| Qwen/Qwen3-4B-Instruct-2507 | sst2_choice | 872 | 0 | 0.0 | 0 | n/a |
+| Qwen/Qwen3-4B-Instruct-2507 | yelp | 1000 | 75 | 0.2 | 4 | 0.000 |
+| Qwen/Qwen3-4B-Instruct-2507 | public items, easy | 48 | 2 | 0.1 | 0 | n/a |
+| Qwen/Qwen3-4B-Instruct-2507 | public items, standard | 72 | 14 | 0.4 | 10 | 0.200 |
+| Qwen/Qwen3-4B-Instruct-2507 | public items, hard | 111 | 28 | 0.7 | 16 | 0.188 |
+| Qwen/Qwen3-1.7B | ag_news | 500 | 18 | 0.1 | 1 | 0.000 |
+| Qwen/Qwen3-1.7B | banking77 | 500 | 500 | 53.0 | 331 | 0.166 |
+| Qwen/Qwen3-1.7B | sst2 | 500 | 3 | 0.0 | 3 | 0.667 |
+| Qwen/Qwen3-1.7B | sst2_choice | 500 | 0 | 0.0 | 0 | n/a |
+| Qwen/Qwen3-1.7B | yelp | 500 | 24 | 0.1 | 2 | 0.500 |
+| Qwen/Qwen3-1.7B | public items, easy | 48 | 2 | 0.1 | 0 | n/a |
+| Qwen/Qwen3-1.7B | public items, standard | 72 | 15 | 0.4 | 11 | 0.182 |
+| Qwen/Qwen3-1.7B | public items, hard | 111 | 28 | 0.7 | 18 | 0.111 |
+| HuggingFaceTB/SmolLM3-3B | ag_news | 500 | 8 | 0.0 | 2 | 0.500 |
+| HuggingFaceTB/SmolLM3-3B | banking77 | 500 | 500 | 56.1 | 231 | 0.147 |
+| HuggingFaceTB/SmolLM3-3B | sst2 | 500 | 1 | 0.0 | 1 | 1.000 |
+| HuggingFaceTB/SmolLM3-3B | sst2_choice | 500 | 0 | 0.0 | 0 | n/a |
+| HuggingFaceTB/SmolLM3-3B | yelp | 500 | 47 | 0.2 | 10 | 0.400 |
+| HuggingFaceTB/SmolLM3-3B | public items, easy | 48 | 1 | 0.0 | 0 | n/a |
+| HuggingFaceTB/SmolLM3-3B | public items, standard | 72 | 19 | 0.6 | 13 | 0.231 |
+| HuggingFaceTB/SmolLM3-3B | public items, hard | 111 | 34 | 0.8 | 21 | 0.190 |
+| Qwen/Qwen3-0.6B | ag_news | 500 | 6 | 0.0 | 2 | 0.500 |
+| Qwen/Qwen3-0.6B | banking77 | 500 | 500 | 53.6 | 315 | 0.127 |
+| Qwen/Qwen3-0.6B | sst2 | 500 | 1 | 0.0 | 1 | 0.000 |
+| Qwen/Qwen3-0.6B | sst2_choice | 500 | 0 | 0.0 | 0 | n/a |
+| Qwen/Qwen3-0.6B | yelp | 500 | 71 | 0.3 | 13 | 0.385 |
+| Qwen/Qwen3-0.6B | public items, easy | 48 | 0 | 0.0 | 0 | n/a |
+| Qwen/Qwen3-0.6B | public items, standard | 72 | 12 | 0.4 | 11 | 0.091 |
+| Qwen/Qwen3-0.6B | public items, hard | 111 | 30 | 0.8 | 20 | 0.150 |
 
-## Question order (SPEC 3.1)
+## Many questions in one call (SPEC 3.1)
 
-The state before the questions (the shipped prompt) against the questions before the state (the order that allowed a question-part cache, dropped for accuracy), same rows, raw scores.
+Five checked questions (the topic, and four yes/no questions that follow from the gold topic) asked alone, one call each, and inside one 20-question call next to 15 filler yes/no questions, at three placements. Every question has a branch of its own, so a question scores the same wherever it sits; what is left is float rounding (the largest score difference, in summed log-prob, over every label). Brackets: share of articles answered yes (the true share is about a quarter). A model whose fp32 weights fit the card has the same run in fp32 under its table. The earlier engine put all questions into one shared prompt; on Qwen/Qwen2.5-1.5B-Instruct the same test then gave 0.864 alone, 0.809 first, 0.575 last and 0.500 spread.
 
-| Model | Dataset | n | Accuracy, state first | Accuracy, questions first | ECE-15, state first | ECE-15, questions first | Same answer |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | ag_news | 200 | 0.790 [0.735, 0.845] | 0.485 [0.420, 0.555] | 0.181 | 0.198 | 0.580 |
-| Qwen/Qwen2.5-1.5B-Instruct | sst2 | 200 | 0.915 [0.875, 0.950] | 0.820 [0.765, 0.870] | 0.049 | 0.058 | 0.885 |
-| Qwen/Qwen2.5-1.5B-Instruct | yelp | 200 | 0.385 [0.320, 0.450] | 0.435 [0.365, 0.500] | 0.369 | 0.314 | 0.675 |
+### Qwen/Qwen2.5-1.5B-Instruct, bf16 (AG News test, n = 200)
+
+| Mode | topic | is_sports | is_business | is_scitech | is_world | Mean | Same answer as alone | Largest score difference from alone |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Alone, one call per question | 0.810 | 0.975 [0.26] | 0.825 [0.38] | 0.880 [0.25] | 0.720 [0.51] | 0.842 | n/a | n/a |
+| One call of 20, checked questions first (1 to 5) | 0.805 | 0.975 [0.26] | 0.815 [0.39] | 0.885 [0.24] | 0.730 [0.50] | 0.842 | 0.992 | 0.831 |
+| One call of 20, checked questions last (16 to 20) | 0.810 | 0.975 [0.26] | 0.820 [0.38] | 0.885 [0.24] | 0.720 [0.51] | 0.842 | 0.994 | 0.834 |
+| One call of 20, checked questions spread (4, 8, 12, 16, 20) | 0.805 | 0.975 [0.26] | 0.815 [0.39] | 0.890 [0.25] | 0.720 [0.51] | 0.841 | 0.991 | 0.749 |
+
+### Qwen/Qwen2.5-1.5B-Instruct, fp32 (AG News test, n = 200)
+
+| Mode | topic | is_sports | is_business | is_scitech | is_world | Mean | Same answer as alone | Largest score difference from alone |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Alone, one call per question | 0.805 | 0.980 [0.26] | 0.820 [0.38] | 0.880 [0.25] | 0.740 [0.49] | 0.845 | n/a | n/a |
+| One call of 20, checked questions first (1 to 5) | 0.805 | 0.980 [0.26] | 0.820 [0.38] | 0.880 [0.25] | 0.740 [0.49] | 0.845 | 1.000 | 0.00016 |
+| One call of 20, checked questions last (16 to 20) | 0.805 | 0.980 [0.26] | 0.820 [0.38] | 0.880 [0.25] | 0.740 [0.49] | 0.845 | 1.000 | 0.000147 |
+| One call of 20, checked questions spread (4, 8, 12, 16, 20) | 0.805 | 0.980 [0.26] | 0.820 [0.38] | 0.880 [0.25] | 0.740 [0.49] | 0.845 | 1.000 | 0.000152 |
+
+### Qwen/Qwen3-4B-Instruct-2507, bf16 (AG News test, n = 200)
+
+| Mode | topic | is_sports | is_business | is_scitech | is_world | Mean | Same answer as alone | Largest score difference from alone |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Alone, one call per question | 0.840 | 0.975 [0.23] | 0.860 [0.23] | 0.860 [0.13] | 0.860 [0.17] | 0.879 | n/a | n/a |
+| One call of 20, checked questions first (1 to 5) | 0.840 | 0.975 [0.23] | 0.850 [0.23] | 0.855 [0.14] | 0.860 [0.17] | 0.876 | 0.997 | 2.87 |
+| One call of 20, checked questions last (16 to 20) | 0.840 | 0.975 [0.23] | 0.860 [0.22] | 0.855 [0.14] | 0.860 [0.17] | 0.878 | 0.997 | 2.75 |
+| One call of 20, checked questions spread (4, 8, 12, 16, 20) | 0.840 | 0.975 [0.23] | 0.850 [0.23] | 0.855 [0.14] | 0.860 [0.17] | 0.876 | 0.997 | 2.75 |
+
+### Qwen/Qwen3-1.7B, bf16 (AG News test, n = 200)
+
+| Mode | topic | is_sports | is_business | is_scitech | is_world | Mean | Same answer as alone | Largest score difference from alone |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Alone, one call per question | 0.775 | 0.980 [0.26] | 0.825 [0.34] | 0.870 [0.24] | 0.870 [0.27] | 0.864 | n/a | n/a |
+| One call of 20, checked questions first (1 to 5) | 0.770 | 0.980 [0.26] | 0.825 [0.34] | 0.880 [0.25] | 0.875 [0.27] | 0.866 | 0.994 | 3.25 |
+| One call of 20, checked questions last (16 to 20) | 0.770 | 0.980 [0.26] | 0.825 [0.34] | 0.880 [0.25] | 0.870 [0.27] | 0.865 | 0.994 | 4.38 |
+| One call of 20, checked questions spread (4, 8, 12, 16, 20) | 0.770 | 0.980 [0.26] | 0.825 [0.34] | 0.880 [0.25] | 0.870 [0.27] | 0.865 | 0.993 | 3.38 |
+
+### Qwen/Qwen3-1.7B, fp32 (AG News test, n = 200)
+
+| Mode | topic | is_sports | is_business | is_scitech | is_world | Mean | Same answer as alone | Largest score difference from alone |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Alone, one call per question | 0.780 | 0.980 [0.26] | 0.835 [0.35] | 0.875 [0.24] | 0.870 [0.27] | 0.868 | n/a | n/a |
+| One call of 20, checked questions first (1 to 5) | 0.780 | 0.980 [0.26] | 0.835 [0.35] | 0.875 [0.24] | 0.870 [0.27] | 0.868 | 1.000 | 0.000529 |
+| One call of 20, checked questions last (16 to 20) | 0.780 | 0.980 [0.26] | 0.835 [0.35] | 0.875 [0.24] | 0.870 [0.27] | 0.868 | 1.000 | 0.00102 |
+| One call of 20, checked questions spread (4, 8, 12, 16, 20) | 0.780 | 0.980 [0.26] | 0.835 [0.35] | 0.875 [0.24] | 0.870 [0.27] | 0.868 | 1.000 | 0.00069 |
+
+### HuggingFaceTB/SmolLM3-3B, bf16 (AG News test, n = 200)
+
+| Mode | topic | is_sports | is_business | is_scitech | is_world | Mean | Same answer as alone | Largest score difference from alone |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Alone, one call per question | 0.805 | 0.970 [0.22] | 0.865 [0.32] | 0.840 [0.14] | 0.810 [0.36] | 0.858 | n/a | n/a |
+| One call of 20, checked questions first (1 to 5) | 0.800 | 0.970 [0.22] | 0.880 [0.33] | 0.840 [0.14] | 0.815 [0.35] | 0.861 | 0.995 | 0.651 |
+| One call of 20, checked questions last (16 to 20) | 0.800 | 0.970 [0.22] | 0.880 [0.33] | 0.840 [0.14] | 0.810 [0.36] | 0.860 | 0.996 | 0.497 |
+| One call of 20, checked questions spread (4, 8, 12, 16, 20) | 0.800 | 0.970 [0.22] | 0.880 [0.33] | 0.835 [0.14] | 0.810 [0.36] | 0.859 | 0.995 | 0.698 |
+
+### Qwen/Qwen3-0.6B, bf16 (AG News test, n = 200)
+
+| Mode | topic | is_sports | is_business | is_scitech | is_world | Mean | Same answer as alone | Largest score difference from alone |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Alone, one call per question | 0.720 | 0.960 [0.24] | 0.805 [0.41] | 0.865 [0.26] | 0.425 [0.81] | 0.755 | n/a | n/a |
+| One call of 20, checked questions first (1 to 5) | 0.715 | 0.965 [0.24] | 0.805 [0.41] | 0.870 [0.25] | 0.420 [0.82] | 0.755 | 0.996 | 1.5 |
+| One call of 20, checked questions last (16 to 20) | 0.720 | 0.960 [0.24] | 0.805 [0.41] | 0.865 [0.26] | 0.415 [0.82] | 0.753 | 0.996 | 4.91 |
+| One call of 20, checked questions spread (4, 8, 12, 16, 20) | 0.715 | 0.965 [0.24] | 0.800 [0.41] | 0.870 [0.25] | 0.415 [0.82] | 0.753 | 0.994 | 1.49 |
+
+### Qwen/Qwen3-0.6B, fp32 (AG News test, n = 200)
+
+| Mode | topic | is_sports | is_business | is_scitech | is_world | Mean | Same answer as alone | Largest score difference from alone |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Alone, one call per question | 0.715 | 0.965 [0.24] | 0.795 [0.41] | 0.855 [0.27] | 0.390 [0.85] | 0.744 | n/a | n/a |
+| One call of 20, checked questions first (1 to 5) | 0.715 | 0.965 [0.24] | 0.795 [0.41] | 0.855 [0.27] | 0.390 [0.85] | 0.744 | 1.000 | 0.000294 |
+| One call of 20, checked questions last (16 to 20) | 0.715 | 0.965 [0.24] | 0.795 [0.41] | 0.855 [0.27] | 0.390 [0.85] | 0.744 | 1.000 | 0.000238 |
+| One call of 20, checked questions spread (4, 8, 12, 16, 20) | 0.715 | 0.965 [0.24] | 0.795 [0.41] | 0.855 [0.27] | 0.390 [0.85] | 0.744 | 1.000 | 0.000314 |
 
 ## JevBench public items
 
@@ -334,149 +412,148 @@ The 231 public items of JevBench (github.com/fstandhartinger/jevbench, MIT), fet
 
 | Model | Arm | Tier | n | Accuracy | Chance | Chance-corrected | ECE-10 at T = 1 | ECE-10 at T pooled | ECE-15 at T = 1 | NLL | Brier |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | easy | 48 | 0.958 [0.896, 1.000] | 0.284 | 94.2 | 0.041 | 0.116 (T = 2.29) | 0.046 | 0.100 | 0.064 |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | standard | 72 | 0.611 [0.500, 0.722] | 0.311 | 43.5 | 0.217 | 0.051 (T = 2.29) | 0.217 | 1.114 | 0.558 |
-| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | hard | 111 | 0.351 [0.261, 0.441] | 0.336 | 2.3 | 0.405 | 0.259 (T = 2.29) | 0.443 | 2.090 | 0.985 |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | easy | 48 | 0.958 [0.896, 1.000] | 0.284 | 94.2 | 0.043 | 0.127 (T = 2.34) | 0.047 | 0.104 | 0.065 |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | standard | 72 | 0.597 [0.486, 0.708] | 0.311 | 41.5 | 0.186 | 0.087 (T = 2.34) | 0.195 | 1.213 | 0.586 |
-| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | hard | 111 | 0.333 [0.243, 0.423] | 0.336 | 0.0 | 0.380 | 0.254 (T = 2.34) | 0.401 | 2.009 | 0.956 |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | easy | 48 | 0.917 [0.833, 0.979] | 0.284 | 88.4 | 0.060 | 0.115 (T = 2.112) | 0.059 | 0.243 | 0.117 |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | standard | 72 | 0.569 [0.444, 0.694] | 0.311 | 37.5 | 0.240 | 0.089 (T = 2.112) | 0.280 | 1.224 | 0.578 |
+| Qwen/Qwen2.5-1.5B-Instruct | MirethSTM1 (full label) | hard | 111 | 0.342 [0.261, 0.432] | 0.336 | 0.9 | 0.401 | 0.247 (T = 2.112) | 0.390 | 2.077 | 0.985 |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | easy | 48 | 0.917 [0.833, 0.979] | 0.284 | 88.4 | 0.061 | 0.141 (T = 2.103) | 0.055 | 0.255 | 0.119 |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | standard | 72 | 0.542 [0.417, 0.667] | 0.311 | 33.5 | 0.238 | 0.088 (T = 2.103) | 0.252 | 1.319 | 0.603 |
+| Qwen/Qwen2.5-1.5B-Instruct | First token (original demo's method) | hard | 111 | 0.333 [0.243, 0.423] | 0.336 | 0.0 | 0.346 | 0.251 (T = 2.103) | 0.346 | 2.017 | 0.960 |
 | Qwen/Qwen2.5-1.5B-Instruct | Normal generation | easy | 48 | 0.479 [0.333, 0.625] | 0.284 | 27.2 | n/a | n/a | n/a | n/a | n/a |
 | Qwen/Qwen2.5-1.5B-Instruct | Normal generation | standard | 72 | 0.431 [0.319, 0.542] | 0.311 | 17.3 | n/a | n/a | n/a | n/a | n/a |
 | Qwen/Qwen2.5-1.5B-Instruct | Normal generation | hard | 111 | 0.234 [0.162, 0.315] | 0.336 | 0.0 | n/a | n/a | n/a | n/a | n/a |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | easy | 48 | 1.000 [1.000, 1.000] | 0.284 | 100.0 | 0.000 | 0.051 (T = 8.04) | 0.000 | 0.000 | 0.000 |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | standard | 72 | 0.750 [0.653, 0.847] | 0.311 | 63.7 | 0.243 | 0.140 (T = 8.04) | 0.243 | 4.455 | 0.484 |
-| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | hard | 111 | 0.477 [0.387, 0.568] | 0.336 | 21.3 | 0.511 | 0.338 (T = 8.04) | 0.511 | 9.526 | 1.029 |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | easy | 48 | 1.000 [1.000, 1.000] | 0.284 | 100.0 | 0.000 | 0.063 (T = 8.55) | 0.000 | 0.000 | 0.000 |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | standard | 72 | 0.750 [0.639, 0.847] | 0.311 | 63.7 | 0.176 | 0.097 (T = 8.55) | 0.176 | 4.275 | 0.424 |
-| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | hard | 111 | 0.450 [0.360, 0.541] | 0.336 | 17.2 | 0.461 | 0.337 (T = 8.55) | 0.461 | 8.890 | 0.978 |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | easy | 48 | 1.000 [1.000, 1.000] | 0.284 | 100.0 | 0.000 | 0.069 (T = 7.930) | 0.000 | 0.000 | 0.000 |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | standard | 72 | 0.708 [0.611, 0.819] | 0.311 | 57.7 | 0.286 | 0.161 (T = 7.930) | 0.286 | 4.740 | 0.575 |
+| Qwen/Qwen3-4B-Instruct-2507 | MirethSTM1 (full label) | hard | 111 | 0.441 [0.351, 0.541] | 0.336 | 15.9 | 0.516 | 0.316 (T = 7.930) | 0.516 | 7.803 | 1.042 |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | easy | 48 | 1.000 [1.000, 1.000] | 0.284 | 100.0 | 0.000 | 0.082 (T = 8.428) | 0.000 | 0.000 | 0.000 |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | standard | 72 | 0.708 [0.597, 0.819] | 0.311 | 57.7 | 0.219 | 0.100 (T = 8.428) | 0.221 | 4.352 | 0.508 |
+| Qwen/Qwen3-4B-Instruct-2507 | First token (original demo's method) | hard | 111 | 0.432 [0.342, 0.532] | 0.336 | 14.5 | 0.454 | 0.266 (T = 8.428) | 0.461 | 7.225 | 0.986 |
 | Qwen/Qwen3-4B-Instruct-2507 | Normal generation | easy | 48 | 0.771 [0.646, 0.876] | 0.284 | 68.0 | n/a | n/a | n/a | n/a | n/a |
 | Qwen/Qwen3-4B-Instruct-2507 | Normal generation | standard | 72 | 0.667 [0.556, 0.778] | 0.311 | 51.6 | n/a | n/a | n/a | n/a | n/a |
 | Qwen/Qwen3-4B-Instruct-2507 | Normal generation | hard | 111 | 0.351 [0.270, 0.450] | 0.336 | 2.3 | n/a | n/a | n/a | n/a | n/a |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | easy | 48 | 0.958 [0.896, 1.000] | 0.284 | 94.2 | 0.031 | 0.076 (T = 6.75) | 0.031 | 0.066 | 0.047 |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | standard | 72 | 0.625 [0.514, 0.736] | 0.311 | 45.6 | 0.290 | 0.103 (T = 6.75) | 0.290 | 2.248 | 0.589 |
-| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | hard | 111 | 0.315 [0.225, 0.405] | 0.336 | 0.0 | 0.620 | 0.348 (T = 6.75) | 0.629 | 6.999 | 1.273 |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | easy | 48 | 0.979 [0.938, 1.000] | 0.284 | 97.1 | 0.022 | 0.056 (T = 6.76) | 0.022 | 0.033 | 0.024 |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | standard | 72 | 0.583 [0.458, 0.681] | 0.311 | 39.5 | 0.271 | 0.129 (T = 6.76) | 0.270 | 2.390 | 0.597 |
-| Qwen/Qwen3-1.7B | First token (original demo's method) | hard | 111 | 0.315 [0.225, 0.405] | 0.336 | 0.0 | 0.526 | 0.304 (T = 6.76) | 0.530 | 6.326 | 1.144 |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | easy | 48 | 0.958 [0.896, 1.000] | 0.284 | 94.2 | 0.045 | 0.085 (T = 7.007) | 0.045 | 0.148 | 0.074 |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | standard | 72 | 0.569 [0.458, 0.694] | 0.311 | 37.5 | 0.327 | 0.133 (T = 7.007) | 0.327 | 3.458 | 0.673 |
+| Qwen/Qwen3-1.7B | MirethSTM1 (full label) | hard | 111 | 0.288 [0.207, 0.378] | 0.336 | 0.0 | 0.648 | 0.365 (T = 7.007) | 0.650 | 7.565 | 1.331 |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | easy | 48 | 0.958 [0.896, 1.000] | 0.284 | 94.2 | 0.046 | 0.085 (T = 7.024) | 0.046 | 0.165 | 0.078 |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | standard | 72 | 0.569 [0.458, 0.694] | 0.311 | 37.5 | 0.294 | 0.155 (T = 7.024) | 0.304 | 3.549 | 0.686 |
+| Qwen/Qwen3-1.7B | First token (original demo's method) | hard | 111 | 0.297 [0.216, 0.378] | 0.336 | 0.0 | 0.567 | 0.314 (T = 7.024) | 0.575 | 6.998 | 1.221 |
 | Qwen/Qwen3-1.7B | Normal generation | easy | 48 | 0.750 [0.625, 0.875] | 0.284 | 65.1 | n/a | n/a | n/a | n/a | n/a |
 | Qwen/Qwen3-1.7B | Normal generation | standard | 72 | 0.458 [0.333, 0.569] | 0.311 | 21.4 | n/a | n/a | n/a | n/a | n/a |
 | Qwen/Qwen3-1.7B | Normal generation | hard | 111 | 0.153 [0.090, 0.225] | 0.336 | 0.0 | n/a | n/a | n/a | n/a | n/a |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | easy | 48 | 1.000 [1.000, 1.000] | 0.284 | 100.0 | 0.002 | 0.066 (T = 2.68) | 0.002 | 0.002 | 0.000 |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | standard | 72 | 0.653 [0.542, 0.764] | 0.311 | 49.6 | 0.218 | 0.071 (T = 2.68) | 0.227 | 1.540 | 0.559 |
-| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | hard | 111 | 0.387 [0.297, 0.477] | 0.336 | 7.7 | 0.408 | 0.234 (T = 2.68) | 0.408 | 2.109 | 0.924 |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | easy | 48 | 1.000 [1.000, 1.000] | 0.284 | 100.0 | 0.002 | 0.071 (T = 2.70) | 0.002 | 0.002 | 0.000 |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | standard | 72 | 0.625 [0.514, 0.736] | 0.311 | 45.6 | 0.204 | 0.077 (T = 2.70) | 0.186 | 1.626 | 0.552 |
-| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | hard | 111 | 0.387 [0.297, 0.477] | 0.336 | 7.7 | 0.360 | 0.207 (T = 2.70) | 0.360 | 2.083 | 0.894 |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | easy | 48 | 1.000 [1.000, 1.000] | 0.284 | 100.0 | 0.004 | 0.103 (T = 2.702) | 0.004 | 0.004 | 0.000 |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | standard | 72 | 0.694 [0.583, 0.806] | 0.311 | 55.6 | 0.187 | 0.150 (T = 2.702) | 0.203 | 1.161 | 0.480 |
+| HuggingFaceTB/SmolLM3-3B | MirethSTM1 (full label) | hard | 111 | 0.396 [0.306, 0.486] | 0.336 | 9.1 | 0.359 | 0.187 (T = 2.702) | 0.365 | 2.151 | 0.851 |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | easy | 48 | 1.000 [1.000, 1.000] | 0.284 | 100.0 | 0.006 | 0.119 (T = 2.545) | 0.006 | 0.006 | 0.000 |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | standard | 72 | 0.667 [0.556, 0.778] | 0.311 | 51.6 | 0.119 | 0.086 (T = 2.545) | 0.167 | 1.178 | 0.479 |
+| HuggingFaceTB/SmolLM3-3B | First token (original demo's method) | hard | 111 | 0.405 [0.315, 0.495] | 0.336 | 10.4 | 0.297 | 0.146 (T = 2.545) | 0.303 | 2.019 | 0.831 |
 | HuggingFaceTB/SmolLM3-3B | Normal generation | easy | 48 | 0.938 [0.875, 1.000] | 0.284 | 91.3 | n/a | n/a | n/a | n/a | n/a |
 | HuggingFaceTB/SmolLM3-3B | Normal generation | standard | 72 | 0.667 [0.556, 0.778] | 0.311 | 51.6 | n/a | n/a | n/a | n/a | n/a |
 | HuggingFaceTB/SmolLM3-3B | Normal generation | hard | 111 | 0.207 [0.135, 0.288] | 0.336 | 0.0 | n/a | n/a | n/a | n/a | n/a |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | easy | 48 | 0.854 [0.750, 0.938] | 0.284 | 79.6 | 0.139 | 0.129 (T = 3.83) | 0.139 | 0.552 | 0.260 |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | standard | 72 | 0.486 [0.375, 0.597] | 0.311 | 25.4 | 0.413 | 0.181 (T = 3.83) | 0.430 | 2.760 | 0.864 |
-| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | hard | 111 | 0.351 [0.270, 0.441] | 0.336 | 2.3 | 0.526 | 0.301 (T = 3.83) | 0.534 | 3.983 | 1.121 |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | easy | 48 | 0.854 [0.750, 0.938] | 0.284 | 79.6 | 0.134 | 0.134 (T = 3.97) | 0.134 | 0.557 | 0.260 |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | standard | 72 | 0.486 [0.375, 0.597] | 0.311 | 25.4 | 0.350 | 0.141 (T = 3.97) | 0.369 | 2.778 | 0.822 |
-| Qwen/Qwen3-0.6B | First token (original demo's method) | hard | 111 | 0.333 [0.243, 0.423] | 0.336 | 0.0 | 0.483 | 0.278 (T = 3.97) | 0.488 | 3.784 | 1.071 |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | easy | 48 | 0.875 [0.791, 0.958] | 0.284 | 82.5 | 0.112 | 0.178 (T = 4.639) | 0.112 | 0.373 | 0.200 |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | standard | 72 | 0.444 [0.333, 0.556] | 0.311 | 19.4 | 0.437 | 0.183 (T = 4.639) | 0.437 | 3.262 | 0.889 |
+| Qwen/Qwen3-0.6B | MirethSTM1 (full label) | hard | 111 | 0.360 [0.279, 0.459] | 0.336 | 3.6 | 0.538 | 0.301 (T = 4.639) | 0.538 | 4.696 | 1.141 |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | easy | 48 | 0.875 [0.791, 0.958] | 0.284 | 82.5 | 0.104 | 0.182 (T = 4.886) | 0.112 | 0.386 | 0.202 |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | standard | 72 | 0.472 [0.361, 0.583] | 0.311 | 23.4 | 0.367 | 0.151 (T = 4.886) | 0.367 | 3.342 | 0.844 |
+| Qwen/Qwen3-0.6B | First token (original demo's method) | hard | 111 | 0.351 [0.270, 0.450] | 0.336 | 2.3 | 0.480 | 0.250 (T = 4.886) | 0.475 | 4.430 | 1.086 |
 | Qwen/Qwen3-0.6B | Normal generation | easy | 48 | 0.000 [0.000, 0.000] | 0.284 | 0.0 | n/a | n/a | n/a | n/a | n/a |
 | Qwen/Qwen3-0.6B | Normal generation | standard | 72 | 0.000 [0.000, 0.000] | 0.311 | 0.0 | n/a | n/a | n/a | n/a | n/a |
 | Qwen/Qwen3-0.6B | Normal generation | hard | 111 | 0.000 [0.000, 0.000] | 0.336 | 0.0 | n/a | n/a | n/a | n/a | n/a |
 
 ## Latency
 
-Batch 1, one request at a time, model loaded, after the warmup runs; each timed span is one `Engine.decide` or `baseline.generate` call with torch.cuda.synchronize() at both ends on CUDA. p50 and p95 with linear interpolation; brackets: bootstrap 95% CI. With few runs p95 rests on the slowest one or two runs. Field-count settings use a different AG News article per run (topic choice plus rule-checked yes/no questions); scenarios repeat their own text. Checked answers: share of fields whose answer matches the gold topic or the rule. Bad fields: hallucinated or missing answers per generation run.
+Batch 1, one request at a time, model loaded, after the warmup runs; each timed span is one `Engine.decide` or `baseline.generate` call with torch.cuda.synchronize() at both ends on CUDA. Normal generation is the same loaded model writing every answer as one JSON object with Hugging Face `generate` (greedy), so each speedup is against that library's decoding speed on this machine (the rate is in the Summary), not against an optimized inference server. p50 and p95 with linear interpolation; brackets: bootstrap 95% CI. With few runs p95 rests on the slowest one or two runs. Field-count settings use a different AG News article per run (topic choice plus rule-checked yes/no questions); scenarios repeat their own text. Checked answers: share of fields whose answer matches the gold topic or the rule. Bad fields: hallucinated or missing answers per generation run. Peak memory: the largest `torch.cuda.max_memory_allocated` of a timed run of that arm.
 
 ### Qwen/Qwen2.5-1.5B-Instruct
 
 Device cuda:0, torch.bfloat16, NVIDIA GeForce RTX 5070, torch 2.11.0+cu128, CUDA 12.8, transformers 5.18.0.
-nvidia-smi at start: ['NVIDIA GeForce RTX 5070, 591.86, 40, 2655 MHz, 13801 MHz, 24.10 W']; at end: ['NVIDIA GeForce RTX 5070, 591.86, 45, 2925 MHz, 13801 MHz, 72.20 W'].
+nvidia-smi (name, driver, temperature C, core clock, memory clock, power) at start: NVIDIA GeForce RTX 5070, 591.86, 42, 2677 MHz, 13801 MHz, 15.65 W; at end: NVIDIA GeForce RTX 5070, 591.86, 46, 2917 MHz, 13801 MHz, 98.04 W.
 
-| Setting | Fields | Runs | MirethSTM1 p50 ms | MirethSTM1 p95 ms | Normal generation p50 ms | Normal generation p95 ms | Speedup at p50 | MirethSTM1 input tokens | Generated tokens | Checked answers right (MirethSTM1 / generation) | Generation: bad fields per run | Peak memory MB |
+| Setting | Fields | Runs | MirethSTM1 p50 ms | MirethSTM1 p95 ms | Normal generation p50 ms | Normal generation p95 ms | Speedup at p50 | MirethSTM1 input tokens | Generated tokens | Checked answers right (MirethSTM1 / generation) | Generation: bad fields per run | Peak memory MiB (MirethSTM1 / generation) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 field | 1 | 30 | 37.2 [36.3, 39.9] | 63.8 [47.5, 77.3] | 370 [338, 388] | 754 [455, 961] | 9.9x | 226 | 9 | 0.73 / 0.70 | 0.1 | 2985 |
-| 5 fields | 5 | 30 | 36.5 [35.9, 44.8] | 66.6 [55.4, 73.0] | 1470 [1430, 1557] | 1801 [1654, 1982] | 40.3x | 333 | 32 | 0.71 / 0.61 | 0.0 | 2995 |
-| 10 fields | 10 | 30 | 37.1 [36.8, 39.9] | 56.0 [52.4, 57.3] | 2911 [2795, 3037] | 3400 [3217, 3494] | 78.5x | 468 | 63 | 0.62 / 0.72 | 0.0 | 3005 |
-| 20 fields | 20 | 30 | 50.6 [50.4, 51.2] | 55.3 [53.1, 55.8] | 6274 [6056, 6549] | 6876 [6688, 6898] | 124.0x | 777 | 134 | 0.50 / 0.66 | 0.6 | 3034 |
-| Support ticket triage (28 fields) | 28 | 20 | 98.1 [97.8, 98.3] | 100 [98.7, 101] | 9704 [9530, 9945] | 10156 [10009, 10543] | 99.0x | 1741 | 206 | n/a / n/a | 0.0 | 3168 |
-| Code change security review (28 fields) | 28 | 20 | 99.3 [99.1, 99.4] | 101 [99.5, 101] | 10249 [10078, 10397] | 10571 [10416, 10841] | 103.2x | 1822 | 216 | n/a / n/a | 0.0 | 3193 |
-| Incident triage with scores (20 fields) | 20 | 20 | 83.3 [83.0, 84.9] | 85.9 [85.0, 87.8] | 6864 [6677, 7076] | 7402 [7201, 7439] | 82.4x | 1488 | 149 | n/a / n/a | 0.0 | 3122 |
-| Request router, 255 queues (4 fields) | 4 | 20 | 220 [220, 221] | 224 [222, 227] | 1649 [1567, 1730] | 1899 [1749, 2050] | 7.5x | 4388 | 30 | n/a / n/a | 2.0 | 3586 |
+| 1 field | 1 | 30 | 37.2 [35.9, 37.5] | 74.8 [37.6, 77.5] | 310 [309, 350] | 910 [422, 1463] | 8.3x | 166 | 9 | 0.77 / 0.70 | 0.1 | 2971 / 2985 |
+| 5 fields | 5 | 30 | 35.7 [35.2, 36.3] | 43.0 [36.9, 67.5] | 1269 [1223, 1291] | 1736 [1362, 2352] | 35.6x | 285 | 32 | 0.71 / 0.61 | 0.0 | 2980 / 2995 |
+| 10 fields | 10 | 30 | 34.9 [34.3, 35.1] | 56.6 [39.3, 66.0] | 2548 [2435, 2678] | 3284 [2828, 3773] | 73.0x | 432 | 63 | 0.72 / 0.72 | 0.0 | 2997 / 3005 |
+| 20 fields | 20 | 30 | 48.1 [46.6, 49.6] | 50.9 [50.1, 52.2] | 5436 [5243, 5500] | 6161 [5652, 6507] | 113.1x | 741 | 134 | 0.67 / 0.66 | 0.6 | 3033 / 3034 |
+| Support ticket triage (28 fields) | 28 | 20 | 96.4 [96.1, 96.7] | 97.3 [96.8, 97.3] | 8214 [8109, 8771] | 9444 [9148, 10142] | 85.2x | 1595 | 206 | n/a / n/a | 0.0 | 3130 / 3168 |
+| Code change security review (28 fields) | 28 | 20 | 97.7 [97.6, 97.7] | 98.9 [97.8, 99.6] | 8796 [8587, 8944] | 9755 [9052, 9985] | 90.0x | 1667 | 216 | n/a / n/a | 0.0 | 3195 / 3172 |
+| Incident triage with scores (20 fields) | 20 | 20 | 81.4 [81.3, 81.5] | 82.3 [81.7, 84.1] | 6122 [5921, 6517] | 6989 [6615, 7017] | 75.2x | 1328 | 149 | n/a / n/a | 0.0 | 3103 / 3122 |
+| Request router, 255 queues (4 fields) | 4 | 20 | 209 [209, 209] | 210 [210, 211] | 1461 [1405, 1558] | 1698 [1601, 1967] | 7.0x | 3325 | 30 | n/a / n/a | 2.0 | 3550 / 3586 |
 
 ### Qwen/Qwen3-4B-Instruct-2507
 
 Device cuda:0, torch.bfloat16, NVIDIA GeForce RTX 5070, torch 2.11.0+cu128, CUDA 12.8, transformers 5.18.0.
-nvidia-smi at start: ['NVIDIA GeForce RTX 5070, 591.86, 43, 2677 MHz, 13801 MHz, 34.38 W']; at end: ['NVIDIA GeForce RTX 5070, 591.86, 52, 2917 MHz, 13801 MHz, 96.19 W'].
+nvidia-smi (name, driver, temperature C, core clock, memory clock, power) at start: NVIDIA GeForce RTX 5070, 591.86, 43, 2745 MHz, 13801 MHz, 32.02 W; at end: NVIDIA GeForce RTX 5070, 591.86, 54, 2902 MHz, 13801 MHz, 117.15 W.
 
-| Setting | Fields | Runs | MirethSTM1 p50 ms | MirethSTM1 p95 ms | Normal generation p50 ms | Normal generation p95 ms | Speedup at p50 | MirethSTM1 input tokens | Generated tokens | Checked answers right (MirethSTM1 / generation) | Generation: bad fields per run | Peak memory MB |
+| Setting | Fields | Runs | MirethSTM1 p50 ms | MirethSTM1 p95 ms | Normal generation p50 ms | Normal generation p95 ms | Speedup at p50 | MirethSTM1 input tokens | Generated tokens | Checked answers right (MirethSTM1 / generation) | Generation: bad fields per run | Peak memory MiB (MirethSTM1 / generation) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 field | 1 | 30 | 58.7 [58.2, 62.7] | 84.2 [68.0, 88.8] | 571 [529, 633] | 734 [677, 913] | 9.7x | 226 | 8 | 0.83 / 0.83 | 0.0 | 7831 |
-| 5 fields | 5 | 30 | 72.0 [68.5, 75.2] | 83.4 [81.5, 85.1] | 2349 [2270, 2400] | 2699 [2538, 2730] | 32.6x | 333 | 32 | 0.65 / 0.61 | 0.0 | 7857 |
-| 10 fields | 10 | 30 | 83.5 [83.4, 84.6] | 89.7 [85.1, 95.7] | 4549 [4390, 4629] | 5128 [4808, 5469] | 54.5x | 468 | 63 | 0.74 / 0.70 | 0.0 | 7888 |
-| 20 fields | 20 | 30 | 121 [120, 122] | 124 [122, 125] | 9844 [9570, 9975] | 10632 [10300, 11042] | 81.6x | 777 | 133 | 0.71 / 0.68 | 0.0 | 7988 |
-| Support ticket triage (28 fields) | 28 | 20 | 274 [274, 274] | 276 [275, 276] | 17163 [16998, 17416] | 17881 [17505, 17988] | 62.7x | 1741 | 236 | n/a / n/a | 0.0 | 8365 |
-| Code change security review (28 fields) | 28 | 20 | 279 [279, 279] | 282 [280, 282] | 18134 [17812, 18259] | 18803 [18401, 18984] | 64.9x | 1822 | 248 | n/a / n/a | 1.0 | 8377 |
-| Incident triage with scores (20 fields) | 20 | 20 | 223 [223, 223] | 224 [223, 225] | 11001 [10820, 11103] | 11767 [11191, 11892] | 49.4x | 1488 | 149 | n/a / n/a | 0.0 | 8261 |
-| Request router, 255 queues (4 fields) | 4 | 20 | 637 [636, 637] | 639 [637, 639] | 2862 [2772, 2941] | 3078 [2957, 3154] | 4.5x | 4388 | 29 | n/a / n/a | 0.0 | 9408 |
+| 1 field | 1 | 30 | 54.6 [54.0, 55.4] | 62.3 [56.0, 72.8] | 486 [480, 532] | 602 [594, 698] | 8.9x | 166 | 8 | 0.83 / 0.83 | 0.0 | 7755 / 7831 |
+| 5 fields | 5 | 30 | 67.4 [57.3, 67.8] | 70.7 [68.0, 75.4] | 2056 [1975, 2152] | 2438 [2331, 2479] | 30.5x | 285 | 32 | 0.65 / 0.61 | 0.0 | 7762 / 7857 |
+| 10 fields | 10 | 30 | 76.0 [75.4, 82.5] | 83.7 [82.8, 89.1] | 3915 [3848, 4030] | 4303 [4197, 4342] | 51.5x | 432 | 63 | 0.74 / 0.70 | 0.0 | 7778 / 7888 |
+| 20 fields | 20 | 30 | 114 [112, 119] | 121 [120, 124] | 8651 [8421, 8910] | 10145 [9309, 10432] | 75.8x | 741 | 133 | 0.67 / 0.68 | 0.0 | 7815 / 7988 |
+| Support ticket triage (28 fields) | 28 | 20 | 271 [271, 272] | 272 [272, 272] | 16863 [16015, 17587] | 18962 [17951, 19102] | 62.2x | 1595 | 236 | n/a / n/a | 0.0 | 7913 / 8365 |
+| Code change security review (28 fields) | 28 | 20 | 279 [279, 280] | 280 [280, 280] | 16990 [16696, 17374] | 17733 [17541, 18101] | 60.9x | 1667 | 248 | n/a / n/a | 1.0 | 7976 / 8377 |
+| Incident triage with scores (20 fields) | 20 | 20 | 211 [210, 211] | 212 [211, 212] | 11175 [10452, 11863] | 12195 [11928, 12876] | 53.1x | 1328 | 149 | n/a / n/a | 0.0 | 7885 / 8261 |
+| Request router, 255 queues (4 fields) | 4 | 20 | 615 [614, 615] | 616 [615, 616] | 2698 [2613, 2783] | 3055 [2790, 3444] | 4.4x | 3325 | 29 | n/a / n/a | 0.0 | 8336 / 9408 |
 
 ### Qwen/Qwen3-1.7B
 
 Device cuda:0, torch.bfloat16, NVIDIA GeForce RTX 5070, torch 2.11.0+cu128, CUDA 12.8, transformers 5.18.0.
-nvidia-smi at start: ['NVIDIA GeForce RTX 5070, 591.86, 39, 2715 MHz, 13801 MHz, 18.67 W']; at end: ['NVIDIA GeForce RTX 5070, 591.86, 47, 2925 MHz, 13801 MHz, 68.23 W'].
+nvidia-smi (name, driver, temperature C, core clock, memory clock, power) at start: NVIDIA GeForce RTX 5070, 591.86, 41, 2670 MHz, 13801 MHz, 22.05 W; at end: NVIDIA GeForce RTX 5070, 591.86, 48, 2917 MHz, 13801 MHz, 71.02 W.
 
-| Setting | Fields | Runs | MirethSTM1 p50 ms | MirethSTM1 p95 ms | Normal generation p50 ms | Normal generation p95 ms | Speedup at p50 | MirethSTM1 input tokens | Generated tokens | Checked answers right (MirethSTM1 / generation) | Generation: bad fields per run | Peak memory MB |
+| Setting | Fields | Runs | MirethSTM1 p50 ms | MirethSTM1 p95 ms | Normal generation p50 ms | Normal generation p95 ms | Speedup at p50 | MirethSTM1 input tokens | Generated tokens | Checked answers right (MirethSTM1 / generation) | Generation: bad fields per run | Peak memory MiB (MirethSTM1 / generation) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 field | 1 | 30 | 48.5 [46.3, 54.5] | 98.5 [63.3, 105] | 891 [840, 1012] | 1315 [1073, 1350] | 18.4x | 230 | 16 | 0.77 / 0.73 | 0.0 | 3355 |
-| 5 fields | 5 | 30 | 44.7 [44.2, 46.7] | 68.9 [58.6, 83.0] | 1873 [1804, 1956] | 2282 [2004, 2338] | 41.9x | 337 | 32 | 0.78 / 0.74 | 0.0 | 3371 |
-| 10 fields | 10 | 30 | 44.0 [43.6, 46.9] | 75.2 [54.1, 84.0] | 3662 [3527, 3759] | 4117 [3985, 4159] | 83.3x | 472 | 63 | 0.75 / 0.78 | 0.0 | 3389 |
-| 20 fields | 20 | 30 | 52.6 [52.3, 53.1] | 72.4 [66.6, 73.9] | 7517 [7348, 7675] | 8123 [7860, 8360] | 142.9x | 781 | 134 | 0.57 / 0.71 | 0.6 | 3444 |
-| Support ticket triage (28 fields) | 28 | 20 | 110 [110, 111] | 113 [111, 114] | 11827 [11650, 11984] | 12464 [12108, 13036] | 107.3x | 1745 | 206 | n/a / n/a | 0.0 | 3663 |
-| Code change security review (28 fields) | 28 | 20 | 113 [112, 114] | 116 [114, 116] | 12367 [12012, 12562] | 13427 [12662, 13938] | 109.8x | 1826 | 219 | n/a / n/a | 0.0 | 3669 |
-| Incident triage with scores (20 fields) | 20 | 20 | 95.3 [95.1, 95.5] | 97.5 [96.1, 97.6] | 8566 [8389, 8763] | 9303 [8814, 9335] | 89.9x | 1492 | 149 | n/a / n/a | 0.0 | 3593 |
-| Request router, 255 queues (4 fields) | 4 | 20 | 258 [257, 258] | 262 [259, 262] | 1911 [1865, 1972] | 2147 [1976, 2535] | 7.4x | 4392 | 28 | n/a / n/a | 0.0 | 4236 |
+| 1 field | 1 | 10 | 44.8 [44.3, 45.3] | 45.8 [45.1, 46.0] | 712 [705, 794] | 943 [725, 1064] | 15.9x | 181 | 16 | 0.70 / 0.60 | 0.1 | 3304 / 3355 |
+| 5 fields | 5 | 10 | 43.5 [43.2, 44.0] | 44.3 [43.8, 44.5] | 1528 [1503, 1684] | 1853 [1610, 1899] | 35.2x | 316 | 32 | 0.68 / 0.68 | 0.0 | 3315 / 3371 |
+| 10 fields | 10 | 10 | 42.8 [42.3, 52.3] | 68.2 [46.1, 77.6] | 3016 [2927, 3173] | 3388 [3023, 3515] | 70.5x | 483 | 63 | 0.74 / 0.77 | 0.0 | 3333 / 3389 |
+| 20 fields | 20 | 10 | 52.7 [52.3, 56.3] | 66.0 [53.0, 71.1] | 6449 [6261, 6821] | 7419 [6539, 7848] | 122.5x | 832 | 133 | 0.67 / 0.72 | 0.0 | 3371 / 3444 |
+| Support ticket triage (28 fields) | 28 | 20 | 111 [110, 111] | 112 [111, 112] | 10247 [9998, 10681] | 12106 [11096, 13270] | 92.7x | 1707 | 206 | n/a / n/a | 0.0 | 3468 / 3663 |
+| Code change security review (28 fields) | 28 | 20 | 132 [131, 132] | 134 [132, 134] | 11150 [10996, 11584] | 12025 [11671, 12072] | 84.7x | 1779 | 219 | n/a / n/a | 0.0 | 3533 / 3669 |
+| Incident triage with scores (20 fields) | 20 | 20 | 95.2 [94.8, 95.8] | 96.8 [95.8, 97.1] | 7613 [7333, 7836] | 8624 [7881, 8735] | 80.0x | 1408 | 149 | n/a / n/a | 0.0 | 3441 / 3593 |
+| Request router, 255 queues (4 fields) | 4 | 20 | 248 [248, 249] | 249 [249, 250] | 1659 [1646, 1789] | 2028 [1956, 2405] | 6.7x | 3341 | 28 | n/a / n/a | 0.0 | 3889 / 4236 |
 
 ### HuggingFaceTB/SmolLM3-3B
 
 Device cuda:0, torch.bfloat16, NVIDIA GeForce RTX 5070, torch 2.11.0+cu128, CUDA 12.8, transformers 5.18.0.
-nvidia-smi at start: ['NVIDIA GeForce RTX 5070, 591.86, 42, 2662 MHz, 13801 MHz, 30.39 W']; at end: ['NVIDIA GeForce RTX 5070, 591.86, 51, 2917 MHz, 13801 MHz, 89.29 W'].
+nvidia-smi (name, driver, temperature C, core clock, memory clock, power) at start: NVIDIA GeForce RTX 5070, 591.86, 42, 2677 MHz, 13801 MHz, 24.50 W; at end: NVIDIA GeForce RTX 5070, 591.86, 51, 2917 MHz, 13801 MHz, 98.70 W.
 
-| Setting | Fields | Runs | MirethSTM1 p50 ms | MirethSTM1 p95 ms | Normal generation p50 ms | Normal generation p95 ms | Speedup at p50 | MirethSTM1 input tokens | Generated tokens | Checked answers right (MirethSTM1 / generation) | Generation: bad fields per run | Peak memory MB |
+| Setting | Fields | Runs | MirethSTM1 p50 ms | MirethSTM1 p95 ms | Normal generation p50 ms | Normal generation p95 ms | Speedup at p50 | MirethSTM1 input tokens | Generated tokens | Checked answers right (MirethSTM1 / generation) | Generation: bad fields per run | Peak memory MiB (MirethSTM1 / generation) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 field | 1 | 10 | 48.4 [43.1, 57.9] | 64.0 [52.0, 64.1] | 444 [405, 604] | 647 [540, 663] | 9.2x | 273 | 8 | 0.80 / 0.70 | 0.0 | 6041 |
-| 5 fields | 5 | 10 | 52.5 [51.7, 62.3] | 65.4 [52.9, 66.0] | 1741 [1689, 1905] | 2031 [1810, 2089] | 33.2x | 378 | 32 | 0.60 / 0.68 | 0.0 | 6054 |
-| 10 fields | 10 | 10 | 64.9 [64.5, 67.0] | 74.0 [65.9, 79.5] | 3287 [3205, 3792] | 3962 [3558, 4008] | 50.7x | 510 | 62 | 0.73 / 0.83 | 0.0 | 6071 |
-| 20 fields | 20 | 10 | 83.8 [83.5, 90.4] | 106 [84.2, 117] | 6798 [6496, 7069] | 7091 [7031, 7107] | 81.1x | 784 | 122 | 0.67 / 0.77 | 0.0 | 6114 |
-| Support ticket triage (28 fields) | 28 | 20 | 184 [184, 185] | 187 [186, 187] | 12887 [12644, 13334] | 13675 [13486, 13704] | 70.0x | 1696 | 216 | n/a / n/a | 0.0 | 6309 |
-| Code change security review (28 fields) | 28 | 20 | 186 [186, 187] | 189 [187, 190] | 13474 [13320, 13789] | 14311 [13921, 14361] | 72.3x | 1783 | 238 | n/a / n/a | 1.0 | 6318 |
-| Incident triage with scores (20 fields) | 20 | 20 | 154 [154, 154] | 157 [155, 159] | 9329 [9142, 9617] | 9995 [9647, 10186] | 60.5x | 1462 | 162 | n/a / n/a | 0.0 | 6243 |
-| Request router, 255 queues (4 fields) | 4 | 20 | 409 [409, 409] | 413 [410, 413] | 2214 [2103, 2336] | 2525 [2371, 2541] | 5.4x | 4420 | 29 | n/a / n/a | 0.0 | 6859 |
+| 1 field | 1 | 10 | 41.5 [41.0, 42.3] | 45.9 [42.0, 48.6] | 372 [372, 378] | 427 [374, 463] | 9.0x | 213 | 8 | 0.80 / 0.70 | 0.0 | 6006 / 6041 |
+| 5 fields | 5 | 10 | 51.6 [48.3, 57.4] | 63.2 [52.2, 63.7] | 1551 [1485, 1755] | 1864 [1683, 1953] | 30.1x | 346 | 32 | 0.70 / 0.68 | 0.0 | 6015 / 6054 |
+| 10 fields | 10 | 10 | 64.5 [64.2, 64.8] | 72.7 [64.6, 79.1] | 3069 [2856, 3382] | 3854 [3168, 4063] | 47.6x | 513 | 62 | 0.82 / 0.83 | 0.0 | 6027 / 6071 |
+| 20 fields | 20 | 10 | 93.2 [89.9, 115] | 116 [94.1, 116] | 6135 [5978, 6346] | 7373 [6308, 8009] | 65.9x | 857 | 122 | 0.79 / 0.78 | 0.0 | 6051 / 6114 |
+| Support ticket triage (28 fields) | 28 | 20 | 213 [213, 214] | 214 [214, 214] | 11677 [11231, 12207] | 13303 [12445, 13536] | 54.7x | 1727 | 216 | n/a / n/a | 0.0 | 6134 / 6309 |
+| Code change security review (28 fields) | 28 | 20 | 215 [215, 216] | 216 [216, 217] | 12914 [12222, 13459] | 14078 [13525, 14703] | 60.0x | 1807 | 238 | n/a / n/a | 1.0 | 6189 / 6318 |
+| Incident triage with scores (20 fields) | 20 | 20 | 167 [167, 168] | 168 [168, 168] | 8709 [8031, 9179] | 9991 [9345, 10801] | 52.1x | 1423 | 162 | n/a / n/a | 0.0 | 6110 / 6243 |
+| Request router, 255 queues (4 fields) | 4 | 20 | 408 [408, 409] | 409 [409, 410] | 2430 [2265, 2666] | 3155 [2781, 3362] | 5.9x | 3369 | 35 | n/a / n/a | 0.0 | 6493 / 6859 |
 
 ### Qwen/Qwen3-0.6B
 
 Device cuda:0, torch.bfloat16, NVIDIA GeForce RTX 5070, torch 2.11.0+cu128, CUDA 12.8, transformers 5.18.0.
-nvidia-smi at start: ['NVIDIA GeForce RTX 5070, 591.86, 52, 2722 MHz, 13801 MHz, 23.24 W']; at end: ['NVIDIA GeForce RTX 5070, 591.86, 44, 2925 MHz, 13801 MHz, 66.43 W'].
+nvidia-smi (name, driver, temperature C, core clock, memory clock, power) at start: NVIDIA GeForce RTX 5070, 591.86, 40, 2707 MHz, 13801 MHz, 15.57 W; at end: NVIDIA GeForce RTX 5070, 591.86, 44, 2925 MHz, 13801 MHz, 65.23 W.
 
-| Setting | Fields | Runs | MirethSTM1 p50 ms | MirethSTM1 p95 ms | Normal generation p50 ms | Normal generation p95 ms | Speedup at p50 | MirethSTM1 input tokens | Generated tokens | Checked answers right (MirethSTM1 / generation) | Generation: bad fields per run | Peak memory MB |
+| Setting | Fields | Runs | MirethSTM1 p50 ms | MirethSTM1 p95 ms | Normal generation p50 ms | Normal generation p95 ms | Speedup at p50 | MirethSTM1 input tokens | Generated tokens | Checked answers right (MirethSTM1 / generation) | Generation: bad fields per run | Peak memory MiB (MirethSTM1 / generation) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 field | 1 | 10 | 45.5 [44.9, 57.0] | 91.5 [48.3, 110] | 1305 [1184, 1391] | 1553 [1350, 1645] | 28.7x | 241 | 22 | 0.70 / 0.00 | 1.0 | 1209 |
-| 5 fields | 5 | 10 | 45.7 [44.6, 68.8] | 75.4 [59.0, 80.2] | 2140 [1985, 2435] | 2518 [2217, 2525] | 46.8x | 348 | 40 | 0.42 / 0.44 | 0.0 | 1222 |
-| 10 fields | 10 | 10 | 44.0 [43.6, 53.5] | 83.0 [44.2, 99.4] | 4075 [3704, 4163] | 4284 [4133, 4358] | 92.5x | 483 | 81 | 0.50 / 0.40 | 2.0 | 1243 |
-| 20 fields | 20 | 10 | 44.1 [43.2, 52.4] | 78.9 [45.0, 94.9] | 7791 [7628, 8111] | 8674 [7979, 9080] | 176.6x | 792 | 156 | 0.47 / 0.49 | 1.9 | 1295 |
-| Support ticket triage (28 fields) | 28 | 20 | 64.6 [64.5, 64.8] | 67.6 [65.0, 68.2] | 15014 [14898, 15951] | 17217 [16124, 17971] | 232.4x | 1745 | 275 | n/a / n/a | 17.0 | 1511 |
-| Code change security review (28 fields) | 28 | 20 | 66.4 [66.0, 68.6] | 75.2 [69.9, 76.1] | 12331 [11477, 13527] | 14234 [14063, 14571] | 185.6x | 1826 | 219 | n/a / n/a | 20.0 | 1517 |
-| Incident triage with scores (20 fields) | 20 | 20 | 54.8 [54.6, 55.4] | 72.0 [55.6, 72.9] | 9381 [9092, 9752] | 10724 [9887, 10928] | 171.1x | 1492 | 178 | n/a / n/a | 20.0 | 1443 |
-| Request router, 255 queues (4 fields) | 4 | 20 | 163 [163, 163] | 164 [163, 164] | 2136 [2044, 2284] | 2733 [2333, 2991] | 13.1x | 4392 | 37 | n/a / n/a | 2.0 | 2078 |
+| 1 field | 1 | 10 | 43.8 [43.1, 44.1] | 56.2 [44.0, 66.0] | 1049 [1030, 1135] | 1202 [1088, 1218] | 24.0x | 181 | 22 | 0.70 / 0.00 | 1.0 | 1155 / 1209 |
+| 5 fields | 5 | 10 | 42.9 [42.5, 43.6] | 43.7 [43.1, 43.8] | 1988 [1707, 2116] | 2258 [2019, 2337] | 46.4x | 316 | 40 | 0.60 / 0.44 | 0.0 | 1170 / 1222 |
+| 10 fields | 10 | 10 | 42.9 [42.5, 48.1] | 59.1 [43.1, 64.0] | 3979 [3755, 4060] | 4302 [4055, 4439] | 92.8x | 483 | 81 | 0.59 / 0.40 | 2.0 | 1187 / 1243 |
+| 20 fields | 20 | 10 | 42.8 [42.0, 44.1] | 49.2 [43.0, 53.4] | 7601 [7437, 7866] | 8150 [7715, 8281] | 177.8x | 832 | 156 | 0.61 / 0.49 | 1.9 | 1224 / 1295 |
+| Support ticket triage (28 fields) | 28 | 20 | 63.7 [63.6, 63.9] | 64.4 [64.0, 64.4] | 13797 [13272, 14114] | 14784 [14178, 15481] | 216.6x | 1707 | 275 | n/a / n/a | 17.0 | 1321 / 1511 |
+| Code change security review (28 fields) | 28 | 20 | 76.2 [76.2, 76.8] | 77.7 [76.8, 78.6] | 10894 [10676, 11667] | 12540 [11726, 13022] | 142.9x | 1779 | 219 | n/a / n/a | 20.0 | 1385 / 1517 |
+| Incident triage with scores (20 fields) | 20 | 20 | 53.4 [53.4, 53.8] | 54.4 [53.9, 54.6] | 8693 [8506, 9040] | 9493 [9240, 10267] | 162.7x | 1408 | 178 | n/a / n/a | 20.0 | 1293 / 1443 |
+| Request router, 255 queues (4 fields) | 4 | 20 | 156 [156, 156] | 157 [156, 157] | 2018 [1989, 2066] | 3019 [2185, 3115] | 13.0x | 3341 | 37 | n/a / n/a | 2.0 | 1739 / 2078 |
 
-<!-- precision:start -->
-## Precision: bf16, fp16 and fp32 (Qwen2.5-1.5B-Instruct)
+## Precision: the same rows in other dtypes
 
-The MirethSTM1 arm in three dtypes on the same 500 evaluation rows per dataset, from bench/out/full (bf16), bench/out/full-fp16 and bench/out/full-fp32. Each dtype fitted its own pooled T on the same 500 calibration rows per dataset: bf16 2.285, fp16 2.289, fp32 2.291. Agreement and score differences are against fp32 on the same rows, over every label's summed log-prob. Median ms is the per-row time of the accuracy run (one question per call).
+The MirethSTM1 arm on the evaluation rows that this run and bench/out/v2-<dtype>/ both hold. Agreement and score differences are against fp32 on the same rows, over every label's summed log-prob. Median ms is the per-row time of the accuracy run (one question per call).
+
+### Qwen/Qwen2.5-1.5B-Instruct
+
+Pooled T, each dtype fitted on the same 500 calibration rows per dataset: bf16 2.112, fp16 2.114, fp32 2.116.
 
 | Dataset | n | Accuracy bf16 / fp16 / fp32 | ECE-15 at T = 1 | ECE-15 at own pooled T | Same answer as fp32: bf16 / fp16 | Mean (max) abs score difference from fp32: bf16 / fp16 | Median ms bf16 / fp16 / fp32 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| AG News | 500 | 0.826 / 0.824 / 0.824 | 0.143 / 0.143 / 0.146 | 0.082 / 0.081 / 0.080 | 0.994 / 1.000 | 0.193 (1.26) / 0.029 (0.26) | 36.8 / 36.7 / 57.2 |
-| Banking77 | 500 | 0.550 / 0.542 / 0.542 | 0.240 / 0.249 / 0.249 | 0.132 / 0.124 / 0.115 | 0.966 / 1.000 | 0.179 (1.26) / 0.024 (0.23) | 80.9 / 72.6 / 240 |
-| SST-2 yes/no | 500 | 0.884 / 0.886 / 0.886 | 0.048 / 0.052 / 0.053 | 0.089 / 0.090 / 0.090 | 0.994 / 1.000 | 0.065 (0.44) / 0.008 (0.06) | 38.5 / 36.5 / 51.2 |
-| SST-2 choice | 500 | 0.920 / 0.922 / 0.922 | 0.066 / 0.069 / 0.069 | 0.020 / 0.027 / 0.029 | 0.998 / 1.000 | 0.189 (0.92) / 0.022 (0.09) | 37.6 / 36.7 / 50.9 |
-| Yelp | 500 | 0.374 / 0.374 / 0.372 | 0.365 / 0.364 / 0.366 | 0.198 / 0.199 / 0.195 | 0.978 / 0.996 | 0.063 (0.54) / 0.009 (0.13) | 38.2 / 37.1 / 78.2 |
-
-Against fp32, bf16 moves accuracy by at most 0.008 and ECE-15 at the pooled T by at most 0.017, and the pooled T by 0.005, all well inside the bootstrap intervals in the Accuracy and Calibration sections. fp16 is as fast as bf16 and 7 to 9 times closer to fp32 in score; fp32 is 1.3x to 3.0x slower than bf16 per row.
-
-<!-- precision:end -->
+| ag_news | 500 | 0.840 / 0.832 / 0.834 | 0.131 / 0.127 / 0.126 | 0.097 / 0.100 / 0.100 | 0.990 / 0.998 | 0.122 (0.81) / 0.017 (0.11) | 35.9 / 36.0 / 50.4 |
+| banking77 | 500 | 0.498 / 0.494 / 0.488 | 0.226 / 0.230 / 0.236 | 0.150 / 0.147 / 0.150 | 0.966 / 0.994 | 0.171 (1.77) / 0.021 (0.30) | 78.8 / 69.7 / 236 |
+| sst2 | 500 | 0.902 / 0.902 / 0.900 | 0.072 / 0.076 / 0.076 | 0.200 / 0.199 / 0.197 | 0.994 / 0.998 | 0.091 (0.44) / 0.011 (0.04) | 36.0 / 35.9 / 34.3 |
+| sst2_choice | 500 | 0.920 / 0.920 / 0.920 | 0.075 / 0.072 / 0.073 | 0.043 / 0.040 / 0.040 | 1.000 / 1.000 | 0.069 (0.84) / 0.009 (0.09) | 35.9 / 36.0 / 34.4 |
+| yelp | 500 | 0.484 / 0.482 / 0.482 | 0.273 / 0.275 / 0.275 | 0.141 / 0.133 / 0.130 | 0.990 / 1.000 | 0.075 (0.49) / 0.010 (0.09) | 35.3 / 35.9 / 74.6 |

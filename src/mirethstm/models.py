@@ -9,9 +9,10 @@ model test suite passes on the GPU, and its speed, accuracy and calibration are 
 written here. A rejected model failed one of these and carries a one-line reason. PENDING marks
 a model the console offers by name that is not approved yet (none at the moment).
 
-The measured numbers come from the benchmark run in docs/benchmark.md (bench/out/full,
-2026-10-01, one RTX 5070, bf16). Facts below come from the Hugging Face API
-(`https://huggingface.co/api/models/<id>`), checked 2026-09-30: `license` from its license tag,
+The measured numbers come from the benchmark run in docs/benchmark.md (bench/out/v2,
+2026-10-02, one RTX 5070, bf16); its Summary section holds every one of them. Facts below
+come from the Hugging Face API (`https://huggingface.co/api/models/<id>`), checked
+2026-09-30: `license` from its license tag,
 `params` from its safetensors total, `release_date` from its `createdAt` (the day the weights
 repo was created, a few days before most public announcements).
 """
@@ -43,23 +44,26 @@ class Model:
     reason: str = ""  # why a rejected model is not approved, one line
 
 
-MEASURED = "RTX 5070, bf16, 2026-10-01"
+MEASURED = "RTX 5070, bf16, 2026-10-02"
 
 # Approved models first, in the picker's order (the console default leads), then the rejected ones.
+# Fast: Qwen2.5-1.5B-Instruct is quicker than Qwen3-1.7B in every latency setting (28 fields 96 against
+# 111 ms, 1 to 10 fields 35 to 37 against 43 to 45 ms) at the same accuracy on the 500 rows per dataset
+# both ran (0.729 against 0.726; difference +0.002, 95% interval -0.013 to +0.018).
 MODELS = (
     Model("Qwen/Qwen2.5-1.5B-Instruct", "Qwen2.5 1.5B Instruct", "Apache-2.0", 1.54, "2024-09-17",
-          "Match first", APPROVED, 98.1, 220.5, 0.713, 0.094, 2.285, MEASURED),
-    Model("Qwen/Qwen3-1.7B", "Qwen3 1.7B", "Apache-2.0", 2.03, "2025-04-27", "Fast", APPROVED,
-          110.2, 257.6, 0.696, 0.091, 6.750, MEASURED),
+          "Fast", APPROVED, 96.4, 209.1, 0.728, 0.109, 2.112, MEASURED),
+    Model("Qwen/Qwen3-1.7B", "Qwen3 1.7B", "Apache-2.0", 2.03, "2025-04-27", "Alternative", APPROVED,
+          110.6, 248.4, 0.726, 0.097, 7.007, MEASURED),
     Model("Qwen/Qwen3-4B-Instruct-2507", "Qwen3 4B Instruct 2507", "Apache-2.0", 4.02, "2025-08-05",
-          "Default SDK/CLI", APPROVED, 273.9, 636.8, 0.752, 0.119, 8.036, MEASURED),
+          "Default SDK/CLI", APPROVED, 271.0, 614.9, 0.760, 0.117, 7.930, MEASURED),
     Model("Qwen/Qwen3-0.6B", "Qwen3 0.6B", "Apache-2.0", 0.75, "2025-04-27", "CPU tests", APPROVED,
-          64.6, 162.8, 0.581, 0.127, 3.830, MEASURED),
+          63.7, 155.7, 0.575, 0.137, 4.639, MEASURED),
     Model("HuggingFaceTB/SmolLM3-3B", "SmolLM3 3B", "Apache-2.0", 3.08, "2025-07-08", "Alternative", APPROVED,
-          184.0, 408.9, 0.672, 0.076, 2.677, MEASURED),
+          213.4, 408.4, 0.688, 0.061, 2.702, MEASURED),
     Model("Qwen/Qwen2.5-0.5B-Instruct", "Qwen2.5 0.5B Instruct", "Apache-2.0", 0.49, "2024-09-16",
-          status=REJECTED, reason="the bf16 GPU suite fails: scores drift 3.95 from the uncached reference, "
-                                  "band 2.5 (fp32 passes); not benchmarked"),
+          status=REJECTED, reason="failed the bf16 GPU suite on 2026-10-01: scores 3.95 from the uncached "
+                                  "reference, band 2.5 (fp32 passed); not benchmarked, not re-run since"),
     Model("microsoft/Phi-4-mini-instruct", "Phi-4 mini instruct", "MIT", 3.84, "2025-02-19",
           status=REJECTED, reason="Engine.load refuses it (its config sets a sliding window); not benchmarked"),
     Model("ibm-granite/granite-3.3-2b-instruct", "Granite 3.3 2B Instruct", "Apache-2.0", 2.53, "2025-04-09",

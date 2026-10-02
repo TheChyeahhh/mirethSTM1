@@ -98,7 +98,7 @@ def test_picker_shows_each_model_with_its_note():
                   value: ui.model.value, title: text("ours-title") }};
     """)
     assert got["options"][0] == ["Qwen/Qwen2.5-1.5B-Instruct",
-                                 "Qwen2.5 1.5B Instruct (Match first, 98 ms for 28 fields, 71% accuracy)",
+                                 "Qwen2.5 1.5B Instruct (Fast, 96 ms for 28 fields, 73% accuracy)",
                                  "Qwen/Qwen2.5-1.5B-Instruct"]
     assert [o[0] for o in got["options"]] == [m.id for m in approved()] + ["some/other-model"]
     assert got["options"][-1][1] == "some/other-model (Unvetted: not on the approved list)"

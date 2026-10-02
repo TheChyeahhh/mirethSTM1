@@ -3,17 +3,19 @@
 import contextlib
 import json
 import math
+import os
 import re
+import types
 
 import pytest
 import torch
 
 from mirethstm import Engine, SchemaError
-from mirethstm.engine import _passes, _tree, check_supported, encode, prefix_ids, systemone_body
+from mirethstm.engine import _passes, _tree, branch_ids, check_supported, encode, shared_ids, systemone_body
 from mirethstm.scenarios import ROUTER_QUESTIONS, ROUTER_STATE, SCENARIOS
-from mirethstm.schema import SYSTEM_PROMPT, candidates, labels, render_user, suffix
+from mirethstm.schema import SUFFIX, SYSTEM_PROMPT, branch_text, candidates, labels, shared_text
 
-from conftest import tolerance
+from conftest import max_diff, tolerance
 
 STATE = {"ticket": {"subject": "Charged twice for my subscription",
                     "body": "I was billed two times this month. Please send my money back today."}}
@@ -34,7 +36,8 @@ MIXED = {
 }
 
 # MIXED plus labels whose trees branch late: options that share leading words, and labels that
-# are a prefix of another label's text ("Sci" < "Sci-Tech" < "Sci-Tech news").
+# are a prefix of another label's text ("Sci" < "Sci-Tech" < "Sci-Tech news"). The last two
+# questions are short, so their trees fit one pass together under a budget the "topic" tree exceeds.
 TREES = {
     **MIXED,
     "plan": {"type": "choice", "instructions": "Which plan change does the customer ask for?",
@@ -43,6 +46,7 @@ TREES = {
     "desk": {"type": "choice", "instructions": "Which news desk is this for?",
              "criteria": {"Sci": None, "Sci-Tech": None, "Sci-Tech news": None, "Sports": None}},
     "chargeback": {"type": "noul", "instructions": "Does the customer threaten a chargeback?"},
+    "bare": {"type": "noul"},
 }
 
 
@@ -51,22 +55,28 @@ def qwen_tokenizer(tokenizer):
     return tokenizer.get_added_vocab().get("<|im_end|>") == 151645
 
 
+def root_ids(tok, q):
+    """The root path of a question's tree: its branch, then the suffix."""
+    return branch_ids(tok, q) + encode(tok, SUFFIX)
+
+
 def reference_scores(engine, state, schema, only=None):
-    """Summed candidate log-probs from one full uncached forward per sequence.
+    """Summed candidate log-probs from one full uncached forward per sequence, every question
+    asked alone: the state, its own branch, its suffix, one candidate.
 
     `only` ({question id: [labels]}) limits the work to those labels.
     """
     tok, model = engine.tokenizer, engine.model
-    prefix = prefix_ids(tok, state, schema)
+    shared = shared_ids(tok, state)
     out = {}
-    for k, (qid, q) in enumerate(schema.items(), 1):
-        suf = encode(tok, suffix(k))
+    for qid, q in schema.items():
+        prefix = shared + root_ids(tok, q)
         out[qid] = {}
         for label, cand in zip(labels(q), candidates(q)):
             if only is not None and label not in only.get(qid, ()):
                 continue
             cand_ids = encode(tok, cand)
-            ids = torch.tensor([prefix + suf + cand_ids], device=model.device)
+            ids = torch.tensor([prefix + cand_ids], device=model.device)
             with torch.inference_mode():
                 # The forward runs over the whole sequence; logits are kept only for the last
                 # len(cand) + 1 positions, so candidate token j is read at row j.
@@ -114,6 +124,20 @@ def test_passes_pack_whole_trees_in_order_within_the_budget():
     assert list(_passes(trees, 1)) == [[t] for t in trees]
     assert list(_passes(trees, 35)) == [trees]
     assert list(_passes([], 10)) == []
+
+
+def test_max_diff_counts_every_label_in_fp32_and_the_likely_ones_in_bf16():
+    fp32, bf16 = (types.SimpleNamespace(model=types.SimpleNamespace(dtype=d)) for d in (torch.float32, torch.bfloat16))
+    ref = {"q": {"a": -1.0, "b": -1.0, "c": -21.0}, "r": {"x": -9.5}}  # `ref` may hold a sample of the labels
+    # Every label of q moved by 2 (bf16 moves the tokens a question's labels share), c by 3 more.
+    got = {"q": {"a": 1.0, "b": 1.0, "c": -16.0}, "r": {"x": -9.0, "y": -0.2}}
+    assert max_diff(got, ref) == max_diff(got, ref, fp32) == 5.0
+    assert max_diff(got, ref, bf16) == pytest.approx(0.0, abs=1e-6)  # a and b keep their share; c is unlikely
+    got["q"]["b"] = -1.0  # b now loses to a
+    assert max_diff(got, ref, bf16) == pytest.approx(2 + math.log1p(math.exp(-2)) - math.log(2), abs=1e-6)
+    even = {"q": {"a": 0.0, "b": 0.0, "c": 0.0}}  # no label above LIKELY: an error, never a silent pass
+    with pytest.raises(ValueError):
+        max_diff(even, even, bf16)
 
 
 def test_systemone_body_rounds_and_drops_call_fields():
@@ -224,7 +248,7 @@ def test_load_checks_settings_before_loading(loads):
 
 def test_load_passes_settings_to_the_engine(loads):
     engine = Engine.load("m", device="cpu")
-    assert (engine.batch_tokens, engine.event_log, engine.tarnlight) == (2048, None, True)
+    assert (engine.batch_tokens, engine.event_log, engine.tarnlight) == (4096, None, True)
     engine = Engine.load("m", device="cpu", batch_tokens=64, event_log="e.jsonl", tarnlight=False)
     assert (engine.batch_tokens, engine.event_log, engine.tarnlight) == (64, "e.jsonl", False)
     assert loads.count(("checked", "m")) == 2  # every loaded model is checked before use
@@ -276,48 +300,46 @@ LABEL_SETS = [
 def test_joint_tokenization_equals_concatenation(tokenizer):
     if not qwen_tokenizer(tokenizer):
         pytest.skip("SPEC 3.3 states these token boundaries for the Qwen tokenizer only")
-    schemas = [{"c": {"type": "choice", "instructions": "Pick one", "criteria": dict.fromkeys(names)}}
-               for names in LABEL_SETS]
-    # Twelve questions so the suffixes reach two-digit ids ({"q10":).
-    many = {f"x{i}": {"type": "noul", "instructions": f"Question {i}?"} for i in range(9)}
-    many["c"] = {"type": "choice", "instructions": "Pick", "criteria": dict.fromkeys(LABEL_SETS[3])}
-    many["s"] = {"type": "score", "instructions": "Rate", "criteria": [str(i) for i in range(10)]}
-    many["last"] = {"type": "noul", "instructions": "Last?"}
-    schemas += [MIXED, many]
-    for state in ["plain text state\n", STATE, ["a", "b"]]:
-        for schema in schemas:
-            # The whole prompt as one string, tokenized in one go (none of it is control-token text).
+    questions = [{"type": "choice", "instructions": "Pick one", "criteria": dict.fromkeys(names)}
+                 for names in LABEL_SETS]
+    questions += [*MIXED.values(), {"type": "noul"}, {"type": "noul", "instructions": "Last?"},
+                  {"type": "score", "instructions": "Rate", "criteria": [str(i) for i in range(10)]}]
+    # States that end in a letter, a full stop, a line break and a closing bracket: the cut between
+    # the shared part and a branch falls right after the state.
+    for state in ["plain text state", "Refund me.", "plain text state\n", STATE, ["a", "b"]]:
+        shared = shared_ids(tokenizer, state)
+        for q in questions:
+            # The question's whole prompt as one string, tokenized in one go (none of it is control-token text).
             text = tokenizer.apply_chat_template(
-                [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": render_user(state, schema)}],
+                [{"role": "system", "content": SYSTEM_PROMPT},
+                 {"role": "user", "content": shared_text(state) + branch_text(q)}],
                 tokenize=False, add_generation_prompt=True, enable_thinking=False)
-            prefix = prefix_ids(tokenizer, state, schema)
+            prefix = shared + branch_ids(tokenizer, q)
             assert prefix == tokenizer.encode(text, add_special_tokens=False)
-            for k, q in enumerate(schema.values(), 1):
-                suf = suffix(k)
-                for cand in candidates(q):
-                    joint = tokenizer.encode(text + suf + cand, add_special_tokens=False)
-                    assert joint == prefix + encode(tokenizer, suf) + encode(tokenizer, cand), (suf, cand)
+            for cand in candidates(q):
+                joint = tokenizer.encode(text + SUFFIX + cand, add_special_tokens=False)
+                assert joint == prefix + encode(tokenizer, SUFFIX) + encode(tokenizer, cand), cand
 
 
 def test_console_scenario_trees(tokenizer):
-    # Every label's path spells its candidate, step by step down the tree, and the trees feed
-    # fewer tokens than the flat sequences did.
+    # Every tree starts with its question's own branch and suffix, every label's path spells its
+    # candidate, step by step down the tree, and the trees feed fewer tokens than flat sequences would.
     for scenario in SCENARIOS:
         nodes = flat = 0
-        for k, q in enumerate(scenario["questions"].values(), 1):
-            suf = encode(tokenizer, suffix(k))
+        for q in scenario["questions"].values():
+            root = root_ids(tokenizer, q)
             cands = [encode(tokenizer, cand) for cand in candidates(q)]
-            tree = _tree(suf, cands)
-            assert tree.tokens[:len(suf)] == suf and tree.depths[:len(suf)] == list(range(len(suf)))
+            tree = _tree(root, cands)
+            assert tree.tokens[:len(root)] == root and tree.depths[:len(root)] == list(range(len(root)))
             for cand, path in zip(cands, tree.paths):
                 assert [token for _, token in path] == cand
-                assert path[0][0] == len(suf) - 1
-                for depth, ((_, token), (parent, _)) in enumerate(zip(path, path[1:]), len(suf)):
+                assert path[0][0] == len(root) - 1
+                for depth, ((_, token), (parent, _)) in enumerate(zip(path, path[1:]), len(root)):
                     assert (tree.tokens[parent], tree.depths[parent]) == (token, depth)
             # One node per distinct (parent, token) step.
-            assert len(tree.tokens) == len(suf) + len({step for path in tree.paths for step in path})
+            assert len(tree.tokens) == len(root) + len({step for path in tree.paths for step in path})
             nodes += len(tree.tokens)
-            flat += sum(len(suf) + len(c) for c in cands)
+            flat += sum(len(root) + len(c) for c in cands)
         assert nodes < flat, scenario["id"]
 
 
@@ -330,9 +352,10 @@ def test_labels_are_encoded_once_per_engine(tokenizer, monkeypatch):
     engine._score_trees = lambda prompt, trees: [[0.0] * len(t.paths) for t in trees]  # stands in for the model
     engine.score(STATE, MIXED)
     assert sum(text == candidates(MIXED["topic"])[0] for text in seen) == 1
+    assert sum(text == branch_text(MIXED["topic"]) for text in seen) == 1
     first = len(seen)
     engine.score("Another state", MIXED)
-    assert len(seen) == first + 1  # only the new user message
+    assert seen[first:] == [shared_text("Another state")]  # only the new state
 
 
 def tiny_engine(tokenizer, seed=0, **settings):
@@ -361,33 +384,87 @@ def forwards(model):
 
 
 def one_pass_layout(tok, state, schema, batch_tokens):
-    """The forwards SPEC 3.4 asks for: the prompt and the first pass's tree nodes together in one
-    forward on an empty cache, then the nodes of each later pass on a cache holding the prompt only."""
-    plen = len(prefix_ids(tok, state, schema))
-    sizes = [sum(len(t.tokens) for t in p) for p in _passes(trees_of(tok, schema), batch_tokens)]
+    """The forwards SPEC 3.4 asks for: the shared part and the first pass's tree nodes together in one
+    forward on an empty cache, then the nodes of each later pass on a cache holding the shared part only."""
+    plen = len(shared_ids(tok, state))
+    sizes = [fed(p) for p in _passes(trees_of(tok, schema), batch_tokens)]
     return [(plen + sizes[0], 0)] + [(m, plen) for m in sizes[1:]]
 
 
-@pytest.mark.parametrize("batch_tokens", [2048, 24, 1])
-def test_tree_scores_equal_uncached_on_a_tiny_model(tokenizer, batch_tokens):
-    # 2048: one forward holds the prompt and every tree. 24 and 1: many passes, only the first
-    # carrying the prompt, and trees larger than the whole budget (1: every tree on its own).
-    engine = tiny_engine(tokenizer, batch_tokens=batch_tokens)
+def fed(trees):
+    """Nodes one pass feeds: the leading root tokens all its trees share are fed once (SPEC 3.4),
+    and every tree keeps the last node of its root."""
+    lead = len(os.path.commonprefix([t.tokens[:t.paths[0][0][0]] for t in trees]))
+    return sum(len(t.tokens) for t in trees) - lead * (len(trees) - 1)
+
+
+DEFAULT_BUDGET = 4096
+BUDGETS = ["default", "tight", 1]
+
+
+def budget(name, tok, schema):
+    """default: one forward holds the shared part and every tree. tight: one node short of the
+    largest tree, so that tree is over the budget and alone in its pass while smaller trees still
+    share one. 1: every tree is over the budget and on its own."""
+    if name == "tight":
+        return max(len(t.tokens) for t in trees_of(tok, schema)) - 1
+    return DEFAULT_BUDGET if name == "default" else name
+
+
+@pytest.mark.parametrize("name", BUDGETS)
+def test_tree_scores_equal_uncached_on_a_tiny_model(tokenizer, name):
     for state, schema in [(STATE, TREES), (ROUTER_STATE, ROUTER_QUESTIONS)]:  # all 255 queues
+        batch_tokens = budget(name, tokenizer, schema)
+        engine = tiny_engine(tokenizer, batch_tokens=batch_tokens)
         with forwards(engine.model) as seen:
             got = engine.score(state, schema)
         assert seen == one_pass_layout(tokenizer, state, schema, batch_tokens)
-        assert (len(seen) == 1) == (batch_tokens == 2048)
+        assert (len(seen) == 1) == (name == "default")
+        trees = trees_of(tokenizer, schema)
+        if name == "default":  # every branch starts "Question:", then the key: those nodes are fed once
+            assert seen[0][0] - len(shared_ids(tokenizer, state)) <= sum(len(t.tokens) for t in trees) - 3 * (len(trees) - 1)
+        if name == "tight":  # a pass of several trees, and a tree over the budget
+            passes = list(_passes(trees, batch_tokens))
+            assert any(len(p) > 1 for p in passes) and any(len(p[0].tokens) > batch_tokens for p in passes)
+        # The reference asks every question alone, so this is also SPEC 3.1's independence.
         ref = reference_scores(engine, state, schema)
         assert {q: list(s) for q, s in got.items()} == {q: list(s) for q, s in ref.items()}
         assert max_diff(got, ref) < 2e-4
 
 
+@pytest.mark.parametrize("name", BUDGETS)
+def test_questions_do_not_see_each_other_on_a_tiny_model(tokenizer, name):
+    # SPEC 3.1: a question scores the same alone, among the others, and wherever it sits among them,
+    # in one pass and in many.
+    for state, schema in [(STATE, TREES), (ROUTER_STATE, ROUTER_QUESTIONS)]:
+        engine = tiny_engine(tokenizer, batch_tokens=budget(name, tokenizer, schema))
+        alone = {qid: engine.score(state, {qid: q})[qid] for qid, q in schema.items()}
+        ids = list(schema)
+        for order in (ids, ids[::-1], ids[1::2] + ids[::2], ids[2:4]):
+            got = engine.score(state, {qid: schema[qid] for qid in order})
+            assert list(got) == order
+            assert max_diff(got, {qid: alone[qid] for qid in order}) < 2e-4
+            answers = engine.decide(state, {qid: schema[qid] for qid in order})["answers"]
+            for qid in order:
+                assert _values(answers[qid]) == pytest.approx(
+                    _values(engine.decide(state, {qid: schema[qid]})["answers"][qid]), abs=1e-3)
+        # The same question twice: the two trees share every root token but the last.
+        first = ids[0]
+        twice = engine.score(state, {"a": schema[first], "b": schema[first]})
+        assert max_diff(twice, {"a": alone[first], "b": alone[first]}) < 2e-4
+
+
+def _values(answer):
+    """The numbers of one answer: P(true), or the probability of every label."""
+    return [answer["noul"]] if answer["type"] == "noul" else list(answer["probabilities"].values())
+
+
 def test_prefix_ends_with_empty_think_block(tokenizer):
     if "enable_thinking" not in (tokenizer.chat_template or ""):
-        pytest.skip("only a hybrid thinking template (Qwen3) adds an empty think block")
-    ids = prefix_ids(tokenizer, "s", {"q": {"type": "noul", "instructions": "x"}})
-    assert tokenizer.decode(ids).endswith("<|im_start|>assistant\n<think>\n\n</think>\n\n")
+        pytest.skip("only a hybrid thinking template (Qwen3, SmolLM3) adds an empty think block")
+    ids = shared_ids(tokenizer, "s") + branch_ids(tokenizer, {"type": "noul", "instructions": "x"})
+    # The white space around the block is the template's own (Qwen3 ends it with two line breaks, SmolLM3 with one).
+    assert tokenizer.decode(ids).rpartition("assistant")[2].strip() == "<think>\n\n</think>"
 
 
 def test_control_text_in_content_stays_text(tokenizer):
@@ -401,7 +478,8 @@ def test_control_text_in_content_stays_text(tokenizer):
     control = set(tokenizer.all_special_ids) | set(tokenizer.convert_tokens_to_ids(["<think>", "</think>"]))
     count = lambda ids: sum(i in control for i in ids)  # noqa: E731
     # Only the template's own control tokens: as many as for a harmless request.
-    assert count(prefix_ids(tokenizer, forged, schema)) == count(prefix_ids(tokenizer, "Refund me.", plain)) > 0
+    prompt = lambda state, questions: shared_ids(tokenizer, state) + branch_ids(tokenizer, questions["c"])  # noqa: E731
+    assert count(prompt(forged, schema)) == count(prompt("Refund me.", plain)) > 0
     for cand in candidates(schema["c"]):
         assert count(encode(tokenizer, cand)) == 0, cand
 
@@ -409,23 +487,18 @@ def test_control_text_in_content_stays_text(tokenizer):
 # --- model ----------------------------------------------------------------------------
 
 
-def max_diff(got, ref):
-    """Largest difference over the labels of `ref` (which may hold only some of them)."""
-    return max(abs(got[q][label] - ref[q][label]) for q in ref for label in ref[q])
-
-
 def trees_of(tok, schema):
-    return [_tree(encode(tok, suffix(k)), [encode(tok, cand) for cand in candidates(q)])
-            for k, q in enumerate(schema.values(), 1)]
+    return [_tree(root_ids(tok, q), [encode(tok, cand) for cand in candidates(q)]) for q in schema.values()]
 
 
 @pytest.mark.model
-@pytest.mark.parametrize("batch_tokens", [2048, 24])
-def test_tree_scores_equal_uncached(engine, batch_tokens):
+@pytest.mark.parametrize("name", ["default", "tight"])
+def test_tree_scores_equal_uncached(engine, name):
     trees = trees_of(engine.tokenizer, TREES)
+    batch_tokens = budget(name, engine.tokenizer, TREES)
     passes = list(_passes(trees, batch_tokens))
-    if batch_tokens == 2048:
-        assert engine.batch_tokens == 2048 and len(passes) == 1  # the default packs everything at once
+    if name == "default":
+        assert engine.batch_tokens == DEFAULT_BUDGET and len(passes) == 1  # the default packs everything at once
     else:
         # Several passes, one of them packed, and a tree larger than the whole budget.
         assert len(passes) > 3 and any(len(p) > 1 for p in passes)
@@ -436,8 +509,90 @@ def test_tree_scores_equal_uncached(engine, batch_tokens):
     assert seen == one_pass_layout(engine.tokenizer, STATE, TREES, batch_tokens)
     ref = reference_scores(engine, STATE, TREES)
     assert {q: list(s) for q, s in got.items()} == {q: list(s) for q, s in ref.items()}
-    diff = max_diff(got, ref)
+    diff = max_diff(got, ref, engine)
     print(f"max abs diff tree vs uncached, {len(passes)} passes: {diff:.3e} ({engine.model.dtype})")
+    assert diff < tolerance(engine)
+
+
+@pytest.mark.model
+@pytest.mark.parametrize("name", ["default", "tight"])
+def test_questions_do_not_see_each_other(engine, name):
+    # SPEC 3.1 on the model under test: decide(state, {a, b, c}) scores what decide(state, {a}),
+    # decide(state, {b}) and decide(state, {c}) score, in any order of the questions.
+    alone = {qid: engine.score(STATE, {qid: q})[qid] for qid, q in TREES.items()}
+    packed = Engine(engine.model, engine.tokenizer, engine.model_id,
+                    batch_tokens=budget(name, engine.tokenizer, TREES))
+    ids = list(TREES)
+    for order in (ids, ids[::-1], ids[1::2] + ids[::2]):
+        got = packed.score(STATE, {qid: TREES[qid] for qid in order})
+        assert list(got) == order
+        diff = max_diff(got, alone, engine)
+        print(f"max abs diff together vs alone, {name} budget: {diff:.3e} ({engine.model.dtype})")
+        assert diff < tolerance(engine)
+
+
+# SPEC 3.1 and 3.2 for STATE and MIXED, written out by hand: the system message, the user message
+# of each question asked alone, and each label's answer text. None of it comes from the engine's
+# own prompt helpers, so a mistake made in the engine and in a helper alike still shows.
+PLAIN_SYSTEM = ("You read a state and answer questions about it. You answer one question per reply, as a JSON "
+                "object that holds only that question's key. A yes/no question takes true or false.")
+PLAIN_STATE = """State:
+{
+  "ticket": {
+    "subject": "Charged twice for my subscription",
+    "body": "I was billed two times this month. Please send my money back today."
+  }
+}
+
+Question:
+"""
+PLAIN_QUESTIONS = {
+    "refund": ("q1 (yes/no): Is the customer asking for money back?\n  true: Asks for a refund\n  false: Does not",
+               {"true": "true", "false": "false"}),
+    "topic": ("q1 (choice): Which team should handle this ticket?\n  Options:\n"
+              '  - "billing": Charges, invoices, refunds\n  - "Sci-Tech"\n  - "World politics news"\n'
+              '  - "bug": Software defects or crashes\n  - "other"\n'
+              '  - "Duplicate or unexpected subscription charges, and the refunds or account credits that follow them"',
+              {name: f'"{name}"' for name in MIXED["topic"]["criteria"]}),
+    "urgency": ("q1 (score, 0 to 3): How urgent is this ticket?\n  0: No time pressure\n  1: Can wait days\n"
+                "  2: Needs attention today\n  3: Critical outage",
+                {str(i): str(i) for i in range(4)}),
+}
+
+
+@pytest.mark.model
+def test_scores_equal_a_plain_forward_over_the_chat_template(engine):
+    # Every question's whole sequence is rendered by the tokenizer's own chat template, tokenized
+    # in one go and run through one plain forward; the engine answers the three in one call.
+    tok, model = engine.tokenizer, engine.model
+    ref = {}
+    for qid, (block, answers) in PLAIN_QUESTIONS.items():
+        prompt = tok.apply_chat_template(
+            [{"role": "system", "content": PLAIN_SYSTEM}, {"role": "user", "content": PLAIN_STATE + block}],
+            tokenize=False, add_generation_prompt=True, enable_thinking=False) + '{"q1":'
+        start = tok.encode(prompt, add_special_tokens=False)
+        # Asked alone, the engine feeds exactly that prompt, token for token, before the labels: a
+        # check that holds in any dtype, where bf16 scores can hide a small change of the prompt.
+        fed = []
+        hook = model.get_decoder().register_forward_pre_hook(
+            lambda module, args, kwargs: fed.append(kwargs["input_ids"][0].tolist()), with_kwargs=True)
+        try:
+            engine.score(STATE, {qid: MIXED[qid]})
+        finally:
+            hook.remove()
+        assert len(fed) == 1 and fed[0][:len(start)] == start
+        ref[qid] = {}
+        for label, answer in answers.items():
+            ids = tok.encode(f"{prompt} {answer}}}", add_special_tokens=False)
+            assert ids[:len(start)] == start  # the answer's tokens are the ones after the prompt
+            with torch.inference_mode():
+                logp = model(input_ids=torch.tensor([ids], device=model.device)).logits[0].float().log_softmax(-1)
+            # Row i - 1 predicts token i.
+            ref[qid][label] = sum(logp[i - 1, ids[i]].item() for i in range(len(start), len(ids)))
+    got = engine.score(STATE, MIXED)
+    assert {q: list(s) for q, s in got.items()} == {q: list(s) for q, s in ref.items()}
+    diff = max_diff(got, ref, engine)
+    print(f"max abs diff engine vs plain chat-template forward: {diff:.3e} ({engine.model.dtype})")
     assert diff < tolerance(engine)
 
 
@@ -447,31 +602,33 @@ def test_tree_scores_equal_uncached(engine, batch_tokens):
 ROUTER_SAMPLE = {
     "route": ["accounts.question", "returns.refund", "returns.question", "payments.refund",
               "security.access_problem", "partners.other"],
-    "needs_human": ["true"],
+    "needs_human": ["true", "false"],  # both labels: bf16 compares a label by its share among the sampled ones
     "priority": ["urgent"],
 }
 
 
 @pytest.mark.model
 def test_router_tree_scores_equal_uncached(engine):
-    # The console's 255 "area.action" queues: one tree of several hundred nodes, far fewer than
-    # the flat tokens. The default budget packs all four trees into one pass; a budget of 16 gives
-    # every tree a pass of its own, each larger than the budget.
+    # The console's 255 "area.action" queues: the question's own text (it lists every queue), then
+    # a label tree of several hundred nodes, far fewer than the flat tokens. The default budget
+    # packs all four trees into one pass; a budget of 16 gives every tree a pass of its own, each
+    # larger than the budget.
     trees = trees_of(engine.tokenizer, ROUTER_QUESTIONS)
-    assert 255 < len(trees[0].tokens) < sum(len(path) for path in trees[0].paths)
-    assert len(list(_passes(trees, 2048))) == 1 and len(list(_passes(trees, 16))) == 4
+    root = len(root_ids(engine.tokenizer, ROUTER_QUESTIONS["route"]))
+    assert 255 < len(trees[0].tokens) - root < sum(len(path) for path in trees[0].paths)
+    assert len(list(_passes(trees, DEFAULT_BUDGET))) == 1 and len(list(_passes(trees, 16))) == 4
     ref = reference_scores(engine, ROUTER_STATE, ROUTER_QUESTIONS, only=ROUTER_SAMPLE)
     by_budget = {}
-    for batch_tokens in (2048, 16):
+    for batch_tokens in (DEFAULT_BUDGET, 16):
         scorer = Engine(engine.model, engine.tokenizer, engine.model_id, batch_tokens=batch_tokens)
         with forwards(engine.model) as seen:
             got = by_budget[batch_tokens] = scorer.score(ROUTER_STATE, ROUTER_QUESTIONS)
         assert seen == one_pass_layout(engine.tokenizer, ROUTER_STATE, ROUTER_QUESTIONS, batch_tokens)
         assert {q: list(s) for q, s in got.items()} == {q: labels(x) for q, x in ROUTER_QUESTIONS.items()}
-        diff = max_diff(got, ref)
+        diff = max_diff(got, ref, engine)
         print(f"max abs diff router tree vs uncached, budget {batch_tokens}: {diff:.3e} ({engine.model.dtype})")
         assert diff < tolerance(engine)
-    assert max_diff(by_budget[16], by_budget[2048]) < tolerance(engine)  # all 255 queues agree
+    assert max_diff(by_budget[16], by_budget[DEFAULT_BUDGET], engine) < tolerance(engine)  # all 255 queues agree
 
 
 def pick(engine, context, criteria):
@@ -549,9 +706,9 @@ def test_decide_shapes(engine):
     assert list(usage) == ["input_tokens", "output_tokens"]
     assert type(usage["input_tokens"]) is int and type(usage["output_tokens"]) is int
     tok = engine.tokenizer
-    expected = len(prefix_ids(tok, STATE, MIXED)) + sum(
-        len(encode(tok, suffix(k))) + len(encode(tok, cand))
-        for k, q in enumerate(MIXED.values(), 1) for cand in candidates(q))
+    # The shared part, every question's branch and suffix once, every label's candidate.
+    expected = len(shared_ids(tok, STATE)) + sum(
+        len(root_ids(tok, q)) + sum(len(encode(tok, cand)) for cand in candidates(q)) for q in MIXED.values())
     assert usage == {"input_tokens": expected, "output_tokens": 0}
 
     assert re.fullmatch(r"[0-9a-f]{32}", result["id"])
@@ -590,8 +747,8 @@ def test_single_label_questions_with_model(engine):
     assert answers["only"]["probabilities"] == {"single": 1.0} and answers["only"]["confidence"] == 1.0
     assert answers["flat"]["probabilities"] == {"0": 1.0} and answers["flat"]["score"] == 0.0
     tok = engine.tokenizer
-    # Only the noul (question 2) is run through the model.
-    expected = len(prefix_ids(tok, STATE, schema)) + len(encode(tok, suffix(2))) * 2 + sum(
+    # Only the noul is run through the model, so only its branch is fed.
+    expected = len(shared_ids(tok, STATE)) + len(root_ids(tok, MIXED["refund"])) + sum(
         len(encode(tok, cand)) for cand in candidates(MIXED["refund"]))
     assert result["usage"]["input_tokens"] == expected
     assert engine.score(STATE, schema)["only"] == {"single": 0.0}

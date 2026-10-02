@@ -3,7 +3,7 @@
 import pytest
 
 from mirethstm import SchemaError
-from mirethstm.schema import candidates, labels, render_user, suffix, validate, SYSTEM_PROMPT
+from mirethstm.schema import SUFFIX, SYSTEM_PROMPT, branch_text, candidates, labels, render_user, shared_text, validate
 
 NOUL = {"type": "noul", "instructions": "Yes?"}
 CHOICE = {"type": "choice", "instructions": "Which?", "criteria": {"a": "first", "b": None}}
@@ -85,7 +85,32 @@ GOLDEN_QUESTIONS = {
                 "criteria": ["No time pressure", {"what": "Can wait days"}, "Critical outage"]},
 }
 
-GOLDEN_USER = """State:
+GOLDEN_SHARED = """State:
+{
+  "ticket": "Charged twice, café card"
+}
+
+"""
+
+# One private branch per question; every one of them uses the key q1.
+GOLDEN_BRANCHES = [
+    """Question:
+q1 (yes/no): Is the customer asking for money back?
+  true: Asks for a refund""",
+    """Question:
+q1 (choice): Which team should handle this?
+  Options:
+  - "billing": Charges, invoices, refunds
+  - "say \\"hi\\\"\"""",
+    """Question:
+q1 (score, 0 to 2): {"ask":"How urgent is this?"}
+  0: No time pressure
+  1: {"what":"Can wait days"}
+  2: Critical outage""",
+]
+
+# The normal-generation baseline's user message: every question in one prompt, numbered in request order.
+GOLDEN_BASELINE_USER = """State:
 {
   "ticket": "Charged twice, café card"
 }
@@ -104,32 +129,40 @@ q3 (score, 0 to 2): {"ask":"How urgent is this?"}
   1: {"what":"Can wait days"}
   2: Critical outage
 
-Answer one question per reply as a JSON object with only that question's key, for example {"q1": true}. A yes/no question takes true or false. A choice question takes one option name as a JSON string, exactly as written. A score question takes one level number."""
+Own rules."""
 
 
 def test_golden_prompt():
     state = {"ticket": "Charged twice, café card"}
-    assert render_user(state, GOLDEN_QUESTIONS) == GOLDEN_USER
+    assert shared_text(state) == GOLDEN_SHARED
+    assert [branch_text(q) for q in GOLDEN_QUESTIONS.values()] == GOLDEN_BRANCHES
     assert SYSTEM_PROMPT == (
         "You read a state and answer questions about it. You answer one question per reply, "
-        "as a JSON object that holds only that question's key."
+        "as a JSON object that holds only that question's key. A yes/no question takes true or false."
     )
 
 
+def test_golden_baseline_prompt():
+    assert render_user({"ticket": "Charged twice, café card"}, GOLDEN_QUESTIONS, "Own rules.") == GOLDEN_BASELINE_USER
+
+
 def test_string_state_verbatim_and_both_noul_criteria():
-    questions = {"x": {"type": "noul", "instructions": "Rain?", "criteria": {"false": "Dry", "true": "Wet"}}}
-    text = render_user("  line one\nline two", questions)
-    assert text.startswith("State:\n  line one\nline two\n\nQuestions:\nq1 (yes/no): Rain?\n  true: Wet\n  false: Dry\n\n")
+    q = {"type": "noul", "instructions": "Rain?", "criteria": {"false": "Dry", "true": "Wet"}}
+    assert shared_text("  line one\nline two") == "State:\n  line one\nline two\n\n"
+    assert branch_text(q) == "Question:\nq1 (yes/no): Rain?\n  true: Wet\n  false: Dry"
 
 
 def test_noul_without_criteria_has_one_line():
-    text = render_user("s", {"x": NOUL})
-    assert "\nq1 (yes/no): Yes?\n\nAnswer one question" in text
+    assert branch_text(NOUL) == "Question:\nq1 (yes/no): Yes?"
 
 
 def test_blocks_without_instructions_show_only_their_criteria():
     questions = {"a": {"type": "noul"}, "b": {"type": "choice", "instructions": None, "criteria": {"x": None}},
                  "c": {"type": "score", "criteria": ["low", "high"]}}
+    assert [branch_text(q) for q in questions.values()] == [
+        "Question:\nq1 (yes/no):",
+        'Question:\nq1 (choice):\n  Options:\n  - "x"',
+        "Question:\nq1 (score, 0 to 1):\n  0: low\n  1: high"]
     assert render_user("s", questions, rules="Own rules.") == (
         "State:\ns\n\nQuestions:\n"
         "q1 (yes/no):\n\n"
@@ -139,8 +172,7 @@ def test_blocks_without_instructions_show_only_their_criteria():
 
 
 def test_continuations():
-    assert suffix(1) == '{"q1":'
-    assert suffix(12) == '{"q12":'
+    assert SUFFIX == '{"q1":'
     assert labels(NOUL) == ["true", "false"]
     assert candidates(NOUL) == [" true}", " false}"]
     choice = {"type": "choice", "instructions": "x", "criteria": {"Sci-Tech": None, 'a "q"': None, "café": None}}

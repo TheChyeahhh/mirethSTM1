@@ -184,7 +184,7 @@ def test_picker_offers_the_approved_models():
 def test_picker_entries_carry_a_note():
     first = entry("Qwen/Qwen2.5-1.5B-Instruct")
     assert (first["name"], first["title"], first["description"]) == (
-        "Qwen/Qwen2.5-1.5B-Instruct", "Qwen2.5 1.5B Instruct", "Match first, 98 ms for 28 fields, 71% accuracy")
+        "Qwen/Qwen2.5-1.5B-Instruct", "Qwen2.5 1.5B Instruct", "Fast, 96 ms for 28 fields, 73% accuracy")
     unvetted = entry("some/other-model")
     assert unvetted["name"] == unvetted["title"] == "some/other-model"
     assert unvetted["status"] == "unvetted" and "approved list" in unvetted["description"]

@@ -19,7 +19,7 @@ def add_model_args(parser):
                         help="model id, repeatable (default: Qwen/Qwen2.5-1.5B-Instruct)")
     parser.add_argument("--dtype", choices=DTYPES, default=None, help="default: bfloat16 on cuda, float32 on cpu")
     parser.add_argument("--device", default=None, help="cuda or cpu (default: cuda if available)")
-    parser.add_argument("--batch-tokens", type=int, default=2048, help="engine scoring budget (SPEC 3.4)")
+    parser.add_argument("--batch-tokens", type=int, default=4096, help="engine scoring budget (SPEC 3.4)")
     parser.add_argument("--out", default=time.strftime("run-%Y%m%d-%H%M%S"),
                         help="run name: results go to bench/out/<name>/ (default: a timestamp)")
 

@@ -1,5 +1,5 @@
-"""The decision engine: full-label tree scoring on a local causal LM, one forward reading the prompt
-and the trees together (SPEC 2.2, 3, 4)."""
+"""The decision engine: full-label tree scoring on a local causal LM, one forward reading the state
+and every question's own branch and labels together (SPEC 2.2, 3, 4)."""
 
 import functools
 import math
@@ -37,20 +37,37 @@ def encode(tokenizer, text):
     return [i for piece in pieces for i in tokenizer.encode(piece, add_special_tokens=False)]
 
 
-def prefix_ids(tokenizer, state, questions, rules=sch.ANSWER_RULES, system=sch.SYSTEM_PROMPT):
-    """The chat-templated prompt (system + user + generation prompt) that is read once.
+def template_ids(tokenizer, system=sch.SYSTEM_PROMPT):
+    """(head, tail): the chat template's ids before and after the user message.
 
-    Only the template's own text yields control tokens; the user message is encoded as plain text.
-    `system` and `rules` (the closing of the user message) differ for the baseline, which asks
-    for one JSON object holding every answer.
+    The head holds the system message, the tail the generation prompt (and an empty think block
+    on hybrid models). Only this, the template's own text, yields control tokens.
     """
     messages = [{"role": "system", "content": system}, {"role": "user", "content": _SLOT}]
     head, tail = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True, enable_thinking=False,
     ).split(_SLOT)
-    return (tokenizer.encode(head, add_special_tokens=False)
-            + encode(tokenizer, sch.render_user(state, questions, rules))
-            + tokenizer.encode(tail, add_special_tokens=False))
+    return tokenizer.encode(head, add_special_tokens=False), tokenizer.encode(tail, add_special_tokens=False)
+
+
+def shared_ids(tokenizer, state):
+    """The part of the prompt every question shares, read once: the template's head, then the state (SPEC 3.1)."""
+    return template_ids(tokenizer)[0] + encode(tokenizer, sch.shared_text(state))
+
+
+def branch_ids(tokenizer, q):
+    """One question's private branch: its own text, then the template's tail (SPEC 3.1).
+
+    `shared_ids` + `branch_ids` is the whole prompt of that question asked alone.
+    """
+    return encode(tokenizer, sch.branch_text(q)) + template_ids(tokenizer)[1]
+
+
+def prefix_ids(tokenizer, state, questions, rules, system):
+    """A chat prompt with every question in one user message, closed by `rules`: the
+    normal-generation baseline's prompt (SPEC 10.2). The user message is encoded as plain text."""
+    head, tail = template_ids(tokenizer, system)
+    return head + encode(tokenizer, sch.render_user(state, questions, rules)) + tail
 
 
 def _softmax(scores, temperature):
@@ -87,21 +104,21 @@ class _Tree(NamedTuple):
     """One question's token tree, nodes in depth-first order (SPEC 3.4)."""
 
     tokens: list  # token id of each node
-    depths: list  # depth of each node; the first suffix token is depth 0
+    depths: list  # depth of each node; the first root token is depth 0
     ends: list    # one past the last node of each node's subtree
     paths: list   # per label: its (parent node, candidate token) pairs, whose log-probs sum to its score
 
 
-def _tree(suffix_ids, candidate_ids):
-    """The suffix as a chain, then every candidate below its last node, sharing the nodes of
-    leading tokens that candidates have in common."""
+def _tree(root_ids, candidate_ids):
+    """The root path (a question's branch and suffix) as a chain, then every candidate below its
+    last node, sharing the nodes of leading tokens that candidates have in common."""
     trie = {}
     for cand in candidate_ids:
         node = trie
         for t in cand:
             node = node.setdefault(t, {})
-    n = len(suffix_ids)
-    tokens, depths, parents = list(suffix_ids), list(range(n)), list(range(-1, n - 1))
+    n = len(root_ids)
+    tokens, depths, parents = list(root_ids), list(range(n)), list(range(-1, n - 1))
     index, stack = {}, [(n - 1, iter(trie.items()))]
     while stack:  # depth-first without recursion: a label can be hundreds of tokens long
         parent, children = stack[-1]
@@ -176,9 +193,10 @@ def _answer(q, probs):
 
 
 class Engine:
-    """Scores every allowed answer of every question; the prompt is read once, in the first forward."""
+    """Scores every allowed answer of every question. The state is read once, in the first forward;
+    every question is answered in a branch of its own, as if it were the only question (SPEC 3.1)."""
 
-    def __init__(self, model, tokenizer, model_id, batch_tokens=2048, temperature=1.0, event_log=None,
+    def __init__(self, model, tokenizer, model_id, batch_tokens=4096, temperature=1.0, event_log=None,
                  tarnlight=True):
         _check_settings(batch_tokens, temperature)
         self.model = model
@@ -188,11 +206,11 @@ class Engine:
         self.temperature = temperature
         self.event_log = event_log
         self.tarnlight = tarnlight
-        # Suffixes and labels repeat from call to call (usually only the state changes): encode each once.
+        # Questions and labels repeat from call to call (usually only the state changes): encode each once.
         self._label_ids = functools.lru_cache(maxsize=1 << 16)(lambda text: tuple(encode(tokenizer, text)))
 
     @classmethod
-    def load(cls, model, device=None, dtype=None, batch_tokens=2048, temperature=None, event_log=None,
+    def load(cls, model, device=None, dtype=None, batch_tokens=4096, temperature=None, event_log=None,
              tarnlight=True):
         """Load a Hugging Face causal LM and its tokenizer."""
         if device is None:  # is_available() can be True with no visible device (CUDA_VISIBLE_DEVICES="")
@@ -241,34 +259,33 @@ class Engine:
     def _run(self, context, schema):
         """Validate, then score every label; returns (scores, input token count).
 
-        The count follows SPEC 2.2: the prompt, plus each label's suffix and candidate as if fed on
-        their own (tree nodes that labels share are fed once, but counted for every label).
+        The count follows SPEC 2.2: the shared part, plus every token of each scored question's
+        branch (its question text, the template's tail and the suffix), plus every label's candidate
+        tokens (tree nodes that labels share are fed once, but counted for every label).
         """
         sch.validate(context, schema)
-        scores = {qid: {} for qid in schema}
-        owners, trees, label_tokens = [], [], 0
-        for k, (qid, q) in enumerate(schema.items(), 1):
-            labels = sch.labels(q)
-            if len(labels) == 1:
-                scores[qid][labels[0]] = 0.0
-                continue
-            suffix_ids = self._label_ids(sch.suffix(k))
-            cands = [self._label_ids(cand) for cand in sch.candidates(q)]
-            owners.append((qid, labels))
-            trees.append(_tree(suffix_ids, cands))
-            label_tokens += sum(len(suffix_ids) + len(c) for c in cands)
-        if not trees:
+        scores = {qid: dict.fromkeys(sch.labels(q), 0.0) for qid, q in schema.items()}
+        asked = [qid for qid in schema if len(scores[qid]) > 1]
+        if not asked:
             return scores, 0
-        prompt = prefix_ids(self.tokenizer, context, schema)
-        for (qid, labels), label_scores in zip(owners, self._score_trees(prompt, trees)):
-            scores[qid] = dict(zip(labels, label_scores))
-        return scores, len(prompt) + label_tokens
+        head, tail = template_ids(self.tokenizer)
+        trees, tokens = [], 0
+        for qid in asked:
+            # The branch is the root path of the question's tree, so it is read in the same forward.
+            root = [*self._label_ids(sch.branch_text(schema[qid])), *tail, *self._label_ids(sch.SUFFIX)]
+            cands = [self._label_ids(cand) for cand in sch.candidates(schema[qid])]
+            trees.append(_tree(root, cands))
+            tokens += len(root) + sum(map(len, cands))
+        shared = head + encode(self.tokenizer, sch.shared_text(context))
+        for qid, label_scores in zip(asked, self._score_trees(shared, trees)):
+            scores[qid] = dict(zip(scores[qid], label_scores))
+        return scores, len(shared) + tokens
 
     @torch.inference_mode()
     def _score_trees(self, prompt, trees):
         """Label scores of every tree, in order (SPEC 3.4): the trees packed into as few passes as
-        batch_tokens allows, the first pass reading the prompt in the same forward. Later passes,
-        if any, each start from a fresh cache holding only the prompt's keys and values."""
+        batch_tokens allows, the first pass reading `prompt` (the shared part) in the same forward.
+        Later passes, if any, each start from a fresh cache holding only the prompt's keys and values."""
         decoder, plen = self.model.get_decoder(), len(prompt)
         first, *rest = _passes(trees, self.batch_tokens)
         cache = DynamicCache(config=self.model.config) if rest else None
@@ -286,16 +303,23 @@ class Engine:
         values are then in `cache`) followed by the trees of `batch`; their label scores.
 
         Prompt tokens sit at positions 0 .. plen - 1, causal among themselves. A tree node sits at
-        plen + its depth and sees the prompt, its ancestors and itself. The output head runs only
-        at nodes whose children are candidate tokens.
+        plen + its depth and sees the prompt, its ancestors and itself, so no question sees
+        another. The output head runs only at nodes whose children are candidate tokens.
         """
         device, f = self.model.device, len(prompt)
-        ids, positions, ends, heads, rows, targets = list(prompt), list(range(f)), [], {}, [], []
+        # The root tokens every tree of the pass starts with ("Question:", the key) are fed once, as
+        # ancestors of all the trees: they see the prompt and each other, exactly as in each tree alone.
+        # Every tree keeps its last root node, the one that predicts its candidates.
+        lead = min(tree.paths[0][0][0] for tree in batch)
+        lead = next((i for i in range(lead) if len({tree.tokens[i] for tree in batch}) > 1), lead)
+        nodes = lead + sum(len(tree.tokens) - lead for tree in batch)
+        ids, positions = prompt + batch[0].tokens[:lead], [*range(f), *range(plen, plen + lead)]
+        ends, heads, rows, targets = [nodes] * lead, {}, [], []
         for tree in batch:
-            base = len(ends)  # nodes laid out so far
-            ids += tree.tokens
-            positions += [plen + d for d in tree.depths]
-            ends += [base + e for e in tree.ends]
+            base = len(ends) - lead  # where the tree's node 0 would sit; its own nodes start at `lead`
+            ids += tree.tokens[lead:]
+            positions += [plen + d for d in tree.depths[lead:]]
+            ends += [base + e for e in tree.ends[lead:]]
             for path in tree.paths:
                 for parent, token in path:
                     rows.append(heads.setdefault(f + base + parent, len(heads)))
