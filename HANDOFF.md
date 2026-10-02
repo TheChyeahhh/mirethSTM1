@@ -71,11 +71,13 @@ Not verified:
 - The local TypeSafe-compatible API costs nothing and is tied to no account.
 - The founder waits to post until the final numbers and the video exist (they do now).
 
-## Open questions for the founder
+## Settled 2026-10-02
 
-1. Console default: keep the fast model (Qwen2.5-1.5B, 96 ms, 0.728) or switch to the most accurate (Qwen3-4B, 271 ms, 0.760)?
-2. After the release, build the second backend so GLiNER2.5-Decide can be picked and raced in the console?
-3. The MCP server was first on the cut list and is not built. Build it after the release?
+1. Console default stays the fast model (Qwen2.5-1.5B-Instruct).
+2. After the release: build the second backend so GLiNER2.5-Decide can be picked and raced in the console.
+3. After the release: build the MCP server.
+
+The only thing left for the founder is the Sunday review and the word to go public.
 
 ## Run it
 

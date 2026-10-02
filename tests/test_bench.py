@@ -6,9 +6,14 @@ import math
 import sys
 from pathlib import Path
 
-import datasets  # noqa: F401  (its cache path is fixed at import, before the home fixture swaps HOME)
 import numpy as np
 import pytest
+
+# The benchmark needs the bench extra (pip install -e ".[dev,bench]"); without it these tests skip.
+# datasets fixes its cache path at import, before the home fixture swaps HOME.
+pytest.importorskip("datasets")
+pytest.importorskip("matplotlib")
+
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # the repository root holds the bench package

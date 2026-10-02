@@ -35,6 +35,8 @@ pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
 pip install -e .
 ```
 
+If the `py` launcher is not installed, use `python -m venv .venv` for the first line (or `uv venv --python 3.11 .venv`).
+
 Check that PyTorch sees the GPU. This should print `True`; on an RTX 50-series card the list must include `sm_120`:
 
 ```
@@ -43,7 +45,7 @@ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_arch_li
 
 Model weights are not bundled. They download from Hugging Face on first use (about 8 GB for the default model). Without a GPU, pass `device="cpu"` (or `--device cpu`); it runs in float32 and is slow for the default model.
 
-Tests: `pip install -e ".[dev]"`, then `pytest`. The model tests use Qwen3-0.6B from the local Hugging Face cache and are skipped when it is missing.
+Tests: `pip install -e ".[dev]"`, then `pytest` (add the benchmark tests with `pip install -e ".[dev,bench]"`; without it they are skipped). The model tests use Qwen3-0.6B from the local Hugging Face cache and are skipped when it is missing.
 
 ## Usage
 
