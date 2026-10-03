@@ -111,9 +111,9 @@ _WEAKNESSES = ["sql_injection", "unsafe_deserialization", "hardcoded_secret", "m
 REVIEW_QUESTIONS = {
     "is_vulnerable": _noul("Does this change add a security vulnerability?"),
     "primary_weakness": _choice("What is the most serious weakness in the change?", _WEAKNESSES),
-    "secondary_weakness": _choice("What is the second most serious weakness?", _WEAKNESSES),
+    "several_weaknesses": _noul("Does the change contain more than one kind of weakness?"),
     "severity": _choice("How severe is the worst problem?", ["low", "medium", "high", "critical"]),
-    "block_merge": _noul("Should merging be blocked?"),
+    "block_merge": _noul("Should this pull request be blocked from merging?"),
     "sql_injection": _noul("Is user input put straight into a SQL query?"),
     "unsafe_deserialization": _noul("Is untrusted data deserialized in an unsafe way?"),
     "hardcoded_secret": _noul("Is a secret or token written into the source code?"),
@@ -198,7 +198,8 @@ _ACTIONS = ["question", "change", "cancellation", "refund", "error", "outage", "
             "feature_request", "other"]
 
 ROUTER_QUESTIONS = {
-    "route": _choice("Which queue should receive the request? Queue names are area.action.",
+    "route": _choice("Which queue should handle the customer's main request? Queue names are area.action: "
+                     "the area is the part of the business involved and the action is what the customer wants.",
                      [f"{area}.{action}" for area in _AREAS for action in _ACTIONS]),
     "needs_human": _noul("Does a person need to look at this?"),
     "priority": _choice("How urgent is the request?", ["low", "normal", "high", "urgent"]),
