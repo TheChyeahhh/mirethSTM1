@@ -18,7 +18,7 @@ from . import baseline
 from .engine import Engine, systemone_body
 from .models import approved, entry
 from .scenarios import SCENARIOS
-from .schema import SchemaError, validate
+from .schema import SchemaError, check_instructions, validate
 
 DEFAULT_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"  # the original demo's model: match it first
 WEB = Path(__file__).with_name("web")
@@ -119,20 +119,24 @@ class Handler(BaseHTTPRequestHandler):
         self._error(404, "not_found", "no such endpoint")
 
     def _api(self, body, rounded):
-        """POST /v1/systemone (rounded, TypeSafe's shape) and /v1/decide (full precision, id and latency).
+        """POST /v1/systemone (rounded, TypeSafe's shape) and /v1/decide (full precision, id and latency,
+        and the optional `instructions` of SPEC 3.1; /v1/systemone keeps TypeSafe's request and ignores them).
 
         The request's `model` and any Authorization header are ignored: the loaded model answers.
         """
         state, questions = body.get("state"), body.get("questions")
+        instructions = None if rounded else body.get("instructions")
         try:
             validate(state, questions)
+            check_instructions(instructions)
         except SchemaError as e:
             return self._error(422, "invalid_request", str(e))
+        extra = {"instructions": instructions} if instructions else {}
         if not self.server.lock.acquire(timeout=self.server.api_wait):
             return self._error(529, "busy", f"still busy after {self.server.api_wait:g} s with a run or a model load")
         try:
             engine = self.server.engine
-            result = engine.decide(state, questions) if engine else None
+            result = engine.decide(state, questions, **extra) if engine else None
         except Exception as e:
             result = e
         finally:

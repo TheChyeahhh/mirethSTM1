@@ -70,7 +70,7 @@ def numbers(value):
 
 def stub_engine(**settings):
     engine = Engine(None, None, "stub/model", **settings)
-    engine._run = lambda context, schema: (SCORES, 470)  # stands in for the model
+    engine._run = lambda context, schema, instructions=None: (SCORES, 470)  # stands in for the model
     return engine
 
 

@@ -6,7 +6,7 @@ import sys
 
 from . import console
 from .engine import Engine
-from .schema import validate
+from .schema import check_instructions, validate
 
 DEFAULT_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 
@@ -16,6 +16,7 @@ def _parser():
     commands = parser.add_subparsers(dest="command", required=True)
     decide = commands.add_parser("decide", help="answer a questions map about the state read from stdin")
     decide.add_argument("--schema", required=True, help="JSON file holding a TypeSafe questions map")
+    decide.add_argument("--instructions", help="text file every question reads first (SPEC 3.1), such as a brief for the task")
     decide.add_argument("--model", default=DEFAULT_MODEL,
                         help=f"Hugging Face model id (default {DEFAULT_MODEL}); ids off the approved list are unvetted")
     decide.add_argument("--temperature", type=float, help="softmax temperature (default: the model's shipped value, else 1.0)")
@@ -50,15 +51,21 @@ def main(argv=None):
     try:
         with open(args.schema, encoding="utf-8-sig") as f:
             questions = json.load(f)
+        instructions = None
+        if args.instructions:
+            with open(args.instructions, encoding="utf-8-sig") as f:
+                instructions = f.read()
         state = sys.stdin.buffer.read().decode("utf-8-sig")
         if args.state_json:
             state = json.loads(state)
         # Validate before loading the model, so a bad schema fails fast.
         validate(state, questions)
+        check_instructions(instructions)
     except (OSError, ValueError) as e:  # ValueError covers SchemaError, bad JSON and bad UTF-8
         print(f"mirethstm: {e}", file=sys.stderr)
         return 2
     engine = Engine.load(args.model, device=args.device, batch_tokens=args.batch_tokens,
                          temperature=args.temperature, event_log=args.log, tarnlight=not args.no_tarnlight)
-    print(json.dumps(engine.decide(state, questions), indent=2))
+    extra = {"instructions": instructions} if instructions else {}
+    print(json.dumps(engine.decide(state, questions, **extra), indent=2))
     return 0

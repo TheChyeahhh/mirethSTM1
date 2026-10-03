@@ -18,8 +18,10 @@ from .calibration import DEFAULT_TEMPERATURES
 from .events import write_events
 
 
-# Stands in for the user message while the chat template is rendered; never reaches the model.
+# Stand in for the user message and the caller's instructions while the chat template is rendered;
+# never reach the model.
 _SLOT = "\x00mirethstm-user\x00"
+_ISLOT = "\x00mirethstm-instructions\x00"
 
 
 def encode(tokenizer, text):
@@ -37,22 +39,30 @@ def encode(tokenizer, text):
     return [i for piece in pieces for i in tokenizer.encode(piece, add_special_tokens=False)]
 
 
-def template_ids(tokenizer, system=sch.SYSTEM_PROMPT):
+def template_ids(tokenizer, system=sch.SYSTEM_PROMPT, instructions=None):
     """(head, tail): the chat template's ids before and after the user message.
 
     The head holds the system message, the tail the generation prompt (and an empty think block
-    on hybrid models). Only this, the template's own text, yields control tokens.
+    on hybrid models). Only this, the template's own text, yields control tokens. The caller's
+    instructions (SPEC 3.1) follow the system message's own text after a blank line, encoded as
+    plain text like the state.
     """
-    messages = [{"role": "system", "content": system}, {"role": "user", "content": _SLOT}]
+    content = f"{system}\n\n{_ISLOT}" if instructions else system
+    messages = [{"role": "system", "content": content}, {"role": "user", "content": _SLOT}]
     head, tail = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True, enable_thinking=False,
     ).split(_SLOT)
-    return tokenizer.encode(head, add_special_tokens=False), tokenizer.encode(tail, add_special_tokens=False)
+    tail_ids = tokenizer.encode(tail, add_special_tokens=False)
+    if not instructions:
+        return tokenizer.encode(head, add_special_tokens=False), tail_ids
+    before, after = head.split(_ISLOT)
+    return (tokenizer.encode(before, add_special_tokens=False) + encode(tokenizer, instructions)
+            + tokenizer.encode(after, add_special_tokens=False)), tail_ids
 
 
-def shared_ids(tokenizer, state):
+def shared_ids(tokenizer, state, instructions=None):
     """The part of the prompt every question shares, read once: the template's head, then the state (SPEC 3.1)."""
-    return template_ids(tokenizer)[0] + encode(tokenizer, sch.shared_text(state))
+    return template_ids(tokenizer, instructions=instructions)[0] + encode(tokenizer, sch.shared_text(state))
 
 
 def branch_ids(tokenizer, q):
@@ -70,7 +80,7 @@ def prefix_ids(tokenizer, state, questions, rules, system):
     return head + encode(tokenizer, sch.render_user(state, questions, rules)) + tail
 
 
-def _softmax(scores, temperature):
+def softmax(scores, temperature):
     top = max(scores)
     weights = [math.exp((s - top) / temperature) for s in scores]
     total = sum(weights)
@@ -174,7 +184,7 @@ def systemone_body(result):
     return _rounded({key: result[key] for key in ("model", "answers", "usage")})
 
 
-def _answer(q, probs):
+def answer(q, probs):
     """One SPEC 2.2 answer from a question and its {label: probability}."""
     if q["type"] == "noul":
         return {"type": "noul", "noul": probs["true"]}
@@ -208,6 +218,9 @@ class Engine:
         self.tarnlight = tarnlight
         # Questions and labels repeat from call to call (usually only the state changes): encode each once.
         self._label_ids = functools.lru_cache(maxsize=1 << 16)(lambda text: tuple(encode(tokenizer, text)))
+        # So do instructions (usually one profile's): render the template once per distinct text.
+        self._template = functools.lru_cache(maxsize=64)(
+            lambda instructions: tuple(map(tuple, template_ids(tokenizer, instructions=instructions))))
 
     @classmethod
     def load(cls, model, device=None, dtype=None, batch_tokens=4096, temperature=None, event_log=None,
@@ -225,21 +238,22 @@ class Engine:
         check_supported(lm, model)
         return cls(lm, tokenizer, model, batch_tokens, temperature, event_log, tarnlight)
 
-    def score(self, context, schema):
+    def score(self, context, schema, instructions=None):
         """Raw summed label log-probs before temperature: {question_id: {label: s}}.
 
         A question with one label is not run through the model; its label gets 0.0 (log 1).
+        `instructions`: optional text that every question of the call reads (SPEC 3.1).
         """
-        return self._run(context, schema)[0]
+        return self._run(context, schema, instructions)[0]
 
-    def decide(self, context, schema):
-        """The SPEC 2.2 response body plus `id` and `latency_ms`."""
+    def decide(self, context, schema, instructions=None):
+        """The SPEC 2.2 response body plus `id` and `latency_ms`; `instructions` as in `score`."""
         start = time.perf_counter()
-        scores, input_tokens = self._run(context, schema)
+        scores, input_tokens = self._run(context, schema, instructions)
         answers, probs_by_field = {}, {}
         for qid, q in schema.items():
-            probs = dict(zip(scores[qid], _softmax(list(scores[qid].values()), self.temperature)))
-            answers[qid] = _answer(q, probs)
+            probs = dict(zip(scores[qid], softmax(list(scores[qid].values()), self.temperature)))
+            answers[qid] = answer(q, probs)
             probs_by_field[qid] = probs
         result = {
             "model": self.model_id,
@@ -256,19 +270,21 @@ class Engine:
                            systemone_body(result), result["id"], result["latency_ms"])
         return result
 
-    def _run(self, context, schema):
+    def _run(self, context, schema, instructions=None):
         """Validate, then score every label; returns (scores, input token count).
 
-        The count follows SPEC 2.2: the shared part, plus every token of each scored question's
-        branch (its question text, the template's tail and the suffix), plus every label's candidate
-        tokens (tree nodes that labels share are fed once, but counted for every label).
+        The count follows SPEC 2.2: the shared part (instructions included), plus every token of
+        each scored question's branch (its question text, the template's tail and the suffix), plus
+        every label's candidate tokens (tree nodes that labels share are fed once, but counted for
+        every label).
         """
         sch.validate(context, schema)
+        sch.check_instructions(instructions)
         scores = {qid: dict.fromkeys(sch.labels(q), 0.0) for qid, q in schema.items()}
         asked = [qid for qid in schema if len(scores[qid]) > 1]
         if not asked:
             return scores, 0
-        head, tail = template_ids(self.tokenizer)
+        head, tail = self._template(instructions or None)
         trees, tokens = [], 0
         for qid in asked:
             # The branch is the root path of the question's tree, so it is read in the same forward.
@@ -276,7 +292,7 @@ class Engine:
             cands = [self._label_ids(cand) for cand in sch.candidates(schema[qid])]
             trees.append(_tree(root, cands))
             tokens += len(root) + sum(map(len, cands))
-        shared = head + encode(self.tokenizer, sch.shared_text(context))
+        shared = [*head, *encode(self.tokenizer, sch.shared_text(context))]
         for qid, label_scores in zip(asked, self._score_trees(shared, trees)):
             scores[qid] = dict(zip(scores[qid], label_scores))
         return scores, len(shared) + tokens

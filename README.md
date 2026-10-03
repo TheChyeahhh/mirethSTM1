@@ -80,6 +80,9 @@ result = engine.decide(text, questions)
 print(result["answers"]["category"]["choice"])  # billing
 
 raw = engine.score(text, questions)  # {question: {label: summed log-prob}}, before temperature
+
+# Optional: a brief every question of the call reads first (SPEC.md section 3.1).
+result = engine.decide(text, questions, instructions="You triage tickets for a software company.")
 ```
 
 `Engine.load` also takes `device`, `dtype`, `batch_tokens`, `temperature`, `event_log` and `tarnlight` (see SPEC.md section 4). Any Hugging Face chat model id works in place of the default; models the engine would score wrongly (sliding-window attention, logits changed after the output head) are refused with a clear error.
@@ -98,7 +101,7 @@ PowerShell has no `<`, and piping the file re-encodes it (Windows PowerShell tur
 cmd /c "mirethstm decide --schema s.json < ctx.txt"
 ```
 
-Options: `--model`, `--temperature`, `--device`, `--batch-tokens`, `--state-json` (read stdin as JSON), `--log events.jsonl` (append one JSON line per question) and `--no-tarnlight`. A bad questions map exits with code 2.
+Options: `--instructions brief.md` (a brief every question reads first), `--model`, `--temperature`, `--device`, `--batch-tokens`, `--state-json` (read stdin as JSON), `--log events.jsonl` (append one JSON line per question) and `--no-tarnlight`. A bad questions map exits with code 2.
 
 The state is stdin exactly as read, so a final newline in `ctx.txt` is part of it and moves the numbers slightly. Output of the example above with `--model Qwen/Qwen3-0.6B --device cpu --temperature 1` and a `ctx.txt` that ends in one newline (numbers shortened here). This small model at T = 1 is overconfident, which is what the fitted temperature is for: without `--temperature`, its shipped T of 4.639 spreads these probabilities out (billing 0.915, refund 0.868).
 

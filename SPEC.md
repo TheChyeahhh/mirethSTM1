@@ -79,6 +79,14 @@ System message, exactly:
 You read a state and answer questions about it. You answer one question per reply, as a JSON object that holds only that question's key. A yes/no question takes true or false.
 ```
 
+Call-level instructions (optional, added 2026-10-03): a caller may pass one text that every question of the call reads, such as a brief for the task. It follows the system message's own text after a blank line, inside the system message, and is encoded as plain text like the state (section 3.3), so it cannot end a turn or open a new one. Without instructions (absent, null or an empty string) the prompt is byte for byte the prompt above. The instructions belong to the shared part, so every question reads them and each question still has a private branch.
+
+```
+You read a state and answer questions about it. ... A yes/no question takes true or false.
+
+<instructions>
+```
+
 Shared part, read once (the template's head with that system message, and the start of the user message):
 
 ```
@@ -171,19 +179,23 @@ engine = Engine.load(
 )
 result = engine.decide(context, schema)   # context: str | dict | list (TypeSafe state); schema: TypeSafe questions map
 raw = engine.score(context, schema)       # {question_id: {label: s}} raw summed log-probs, before temperature
+result = engine.decide(context, schema, instructions="A brief every question reads.")  # optional, section 3.1
 ```
 
-`decide` returns the section 2.2 body plus two extra keys: `id` (32 hex chars, one per call) and `latency_ms` (float, wall time of the call).
+`decide` returns the section 2.2 body plus two extra keys: `id` (32 hex chars, one per call) and `latency_ms` (float, wall time of the call). `instructions` (both methods) is `None` or a string without NUL characters; anything else raises `SchemaError` before the model is used. The event log and the Tarnlight drop keep their formats and do not carry the instructions.
+
+`mirethstm.engine.softmax(scores, temperature)` and `mirethstm.engine.answer(question, probabilities)` are public, so callers that apply their own calibration to `score` can build the same answers as `decide`.
 
 ## 5. CLI
 
 ```
-mirethstm decide --schema s.json [--model ID] [--temperature T] [--device D] [--batch-tokens N] [--log events.jsonl] [--state-json] [--no-tarnlight] < ctx.txt
+mirethstm decide --schema s.json [--instructions brief.md] [--model ID] [--temperature T] [--device D] [--batch-tokens N] [--log events.jsonl] [--state-json] [--no-tarnlight] < ctx.txt
 mirethstm console [--model ID] [--device D] [--host 127.0.0.1] [--port 8766] [--no-tarnlight]
 ```
 
 - stdin is the state, read as UTF-8 exactly as given (a final newline is part of the state). By default it is a plain string; with `--state-json` it is parsed as JSON.
 - `s.json` holds a TypeSafe `questions` map.
+- `--instructions brief.md`: a UTF-8 text file passed as the call-level instructions (section 3.1).
 - Prints the `decide` result as JSON on stdout (non-ASCII escaped, so any Windows console can print it).
 - Exit code 2, message on stderr, before any model loads: `SchemaError`, unreadable or invalid JSON input, non-UTF-8 stdin, `--batch-tokens` below 1, `--temperature` not above 0.
 - In Windows PowerShell 5.1, pipe-free: `cmd /c "mirethstm decide --schema s.json < ctx.txt"` (a PowerShell pipe re-encodes the text and corrupts non-ASCII characters).
@@ -195,7 +207,7 @@ The console's standard-library server (section 10) also answers the API, so ther
 | Route | Behaviour |
 | --- | --- |
 | `POST /v1/systemone` | TypeSafe drop-in: section 2 shapes, numbers rounded to 2 decimals, `id` in headers `x-request-id` and `x-typesafe-request-id` (the official SDK reads the second), latency in `server-timing`. The request's `model` is accepted and ignored; the answer names the loaded model |
-| `POST /v1/decide` | Same request; full precision; body includes `id` and `latency_ms` |
+| `POST /v1/decide` | Same request, plus an optional `instructions` string (section 3.1); full precision; body includes `id` and `latency_ms`. `/v1/systemone` keeps TypeSafe's request and ignores `instructions` |
 | `GET /v1/models` | The loaded model and the approved list (section 11) |
 
 Requests share the one model: an API request waits for the current run (up to 60 s, then 529). Errors: `{"error": {"type": "...", "message": "..."}}` (our own shape; TypeSafe's is undocumented): 422 validation, 413 body too large, 529 busy or loading. Any Authorization header is accepted and ignored, so existing TypeSafe clients work unchanged when pointed at `http://127.0.0.1:8766`.

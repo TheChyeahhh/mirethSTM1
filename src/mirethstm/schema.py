@@ -69,6 +69,14 @@ def validate(state, questions):
                 raise SchemaError(f"{where}: level descriptions must be strings, objects or arrays")
 
 
+def check_instructions(instructions):
+    """Raise SchemaError unless `instructions` is None or a string (SPEC 3.1). An empty string means none."""
+    if instructions is not None and not isinstance(instructions, str):
+        raise SchemaError("instructions must be a string or null")
+    if instructions and "\x00" in instructions:
+        raise SchemaError("instructions must not contain NUL characters")
+
+
 def text(value):
     """A string as is; anything else as compact JSON."""
     if isinstance(value, str):

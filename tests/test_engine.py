@@ -202,7 +202,7 @@ def test_ties_go_to_the_earlier_option(tmp_path):
     engine = Engine(None, None, "m", event_log=str(log))
     schema = {"pick": {"type": "choice", "instructions": "x", "criteria": {"a": None, "b": None, "c": None}}}
     # Stand in for the model: "b" and "c" tie on top.
-    engine._run = lambda context, schema: ({"pick": {"a": -1.0, "b": 0.0, "c": 0.0}}, 0)
+    engine._run = lambda context, schema, instructions=None: ({"pick": {"a": -1.0, "b": 0.0, "c": 0.0}}, 0)
     assert engine.decide("s", schema)["answers"]["pick"]["choice"] == "b"
     assert json.loads(log.read_text(encoding="utf-8"))["label"] == "b"
 
