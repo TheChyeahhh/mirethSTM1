@@ -1,6 +1,6 @@
-# MirethSTM1
+# MirethSTM1 Lite
 
-A free, open-source decision engine by Mireth AI: ask typed questions about a text and get a probability for every allowed answer, scored by a local model instead of generated.
+The free, open-source edition of MirethSTM1, a decision engine by Mireth AI: ask typed questions about a text and get a probability for every allowed answer, scored by a local model instead of generated. The package and the commands are named `mirethstm`.
 
 ## What it is, and what it is not
 
